@@ -1,63 +1,61 @@
 // Configure Monaco Editor base path
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
 
-// =========================================================================
-// 🛠️ ULTIMATE LANGUAGE ARCHITECTURE CONFIGURATION
-// =========================================================================
+
 const CONFIG = {
-    langName: "YaraLang",
+    langName: "ApniZuban",
     keywords: {
-        start: "yara shuru",
-        end: "yara khatam",
-        print: "bol yara",
-        variable: "yara ye hai",
+        start: "iftitah",
+        end: "ikhtitam",
+        print: "bolen",
+        variable: "ye hai",
         ifKeyword: "agar",
         elseKeyword: "warna",
         whileKeyword: "jab tak",
         forKeyword: "har dafa",
         funcKeyword: "tareeqa",
-        returnKeyword: "wapas de",
-        breakKeyword: "ruk ja",
-        continueKeyword: "aage barh",
+        returnKeyword: "wapas den",
+        breakKeyword: "ruk jayen",
+        continueKeyword: "aage barhen",
         trueKeyword: "sach",
         falseKeyword: "jhoot",
         andKeyword: "aur",
         orKeyword: "ya"
     },
     sampleCode: [
-        "yara shuru",
+        "iftitah",
         "",
-        "bol yara \"--- Starting Functions & Logic Test ---\"",
+        "bolen \"--- Starting Functions & Logic Test ---\"",
         "",
         "// Let's define a function that does math and uses booleans",
         "tareeqa checkNumber(num) {",
         "    agar (num > 10 aur num < 20) {",
-        "        wapas de sach",
+        "        wapas den sach",
         "    } warna {",
-        "        wapas de jhoot",
+        "        wapas den jhoot",
         "    }",
         "}",
         "",
-        "yara ye hai result = checkNumber(15)",
-        "bol yara \"Is 15 between 10 and 20?\"",
-        "bol yara result",
+        "ye hai result = checkNumber(15)",
+        "bolen \"Is 15 between 10 and 20?\"",
+        "bolen result",
         "",
-        "bol yara \"--- Starting For Loop Test ---\"",
+        "bolen \"--- Starting For Loop Test ---\"",
         "",
-        "har dafa (yara ye hai i = 1; i < 6; i = i + 1) {",
+        "har dafa (ye hai i = 1; i < 6; i = i + 1) {",
         "    agar (i == 3) {",
-        "        bol yara \"Skipping number 3!\"",
-        "        aage barh",
+        "        bolen \"Skipping number 3!\"",
+        "        aage barhen",
         "    }",
         "    agar (i == 5) {",
-        "        bol yara \"Breaking out at 5!\"",
-        "        ruk ja",
+        "        bolen \"Breaking out at 5!\"",
+        "        ruk jayen",
         "    }",
-        "    bol yara i",
+        "    bolen i",
         "}",
         "",
-        "bol yara \"--- Execution Complete ---\"",
-        "yara khatam"
+        "bolen \"--- Execution Complete ---\"",
+        "ikhtitam"
     ].join("\n")
 };
 
@@ -78,9 +76,7 @@ const KEYWORD_MAP = {
 
 const KEYWORD_ENTRIES = Object.entries(KEYWORD_MAP).sort((a, b) => b[0].length - a[0].length);
 
-// =========================================================================
-// 🚀 PHASE 1: ULTIMATE LEXER
-// =========================================================================
+
 class Lexer {
     constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; }
     hasMoreTokens() { return this.cursor < this.source.length; }
@@ -158,9 +154,7 @@ class Lexer {
     }
 }
 
-// =========================================================================
-// 🌲 PHASE 2: ULTIMATE SYNTACTIC PARSER
-// =========================================================================
+
 class Parser {
     constructor(tokens) { this.tokens = tokens; this.cursor = 0; }
     lookahead() { return this.tokens[this.cursor] || null; }
@@ -380,9 +374,7 @@ class Parser {
     }
 }
 
-// =========================================================================
-// ⚙️ PHASE 3: ULTIMATE VIRTUAL INTERPRETER
-// =========================================================================
+
 class Environment {
     constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
     define(name, value) { this.vars.set(name, value); }
@@ -521,9 +513,7 @@ class RuntimeInterpreter {
     }
 }
 
-// =========================================================================
-// 🖥️ IDE FRONTEND CANVAS WIRING GLUE
-// =========================================================================
+
 let monacoEditorInstance;
 
 require(['vs/editor/editor.main'], function () {
@@ -541,7 +531,7 @@ require(['vs/editor/editor.main'], function () {
                 [/\d+(\.\d+)?/, 'number'],
                 [/[a-zA-Z_][a-zA-Z0-9_]*/, 'identifier'],
                 [/[{}()]/, 'delimiter'],
-                [[/[<>=+\-*\/%!]/], 'operator']
+                [/[<>=+\-*\/%!]+/, 'operator'],
             ]
         }
     });
