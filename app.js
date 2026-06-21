@@ -12,7 +12,7 @@ const CONFIG = {
         ifKeyword: "agar",
         elseKeyword: "warna",
         whileKeyword: "jab tak",
-        forKeyword: "har dafa",
+        forKeyword: "jab bhi",
         funcKeyword: "tareeqa",
         returnKeyword: "wapas den",
         breakKeyword: "ruk jayen",
@@ -24,37 +24,7 @@ const CONFIG = {
     },
     sampleCode: [
         "iftitah",
-        "",
-        "bolen \"Starting Functions & Logic Test.\"",
-        "",
-        "// Aik Function banate hain jo math karke sahi ya ghalat batata hai.",
-        "tareeqa checkNumber(num) {",
-        "    agar (num > 10 aur num < 20) {",
-        "        wapas den sahi",
-        "    } warna {",
-        "        wapas den ghalat",
-        "    }",
-        "}",
-        "",
-        "ye hai result = checkNumber(15)",
-        "bolen \"Is 15 between 10 and 20?\"",
-        "bolen result",
-        "",
-        "bolen \"Starting For Loop Test\"",
-        "",
-        "har dafa (ye hai i = 1; i < 6; i = i + 1) {",
-        "    agar (i == 3) {",
-        "        bolen \"Skipping number 3!\"",
-        "        aage barhen",
-        "    }",
-        "    agar (i == 5) {",
-        "        bolen \"Breaking out at 5!\"",
-        "        ruk jayen",
-        "    }",
-        "    bolen i",
-        "}",
-        "",
-        "bolen \"Execution Complete\"",
+        "bolen \"Hello World, This is Apni Zuban.\"",
         "ikhtitam"
     ].join("\n")
 };
@@ -585,7 +555,7 @@ window.executeSourceCode = function() {
             runtimeLogs.forEach(line => {
                 const row = document.createElement('div');
                 row.className = 'terminal-line';
-                row.innerHTML = `<span class="terminal-prompt">></span><span class="terminal-output"></span>`;
+                row.innerHTML = `<span class="terminal-output"></span>`;
                 row.querySelector('.terminal-output').innerText = line;
                 terminalScreen.appendChild(row);
             });
