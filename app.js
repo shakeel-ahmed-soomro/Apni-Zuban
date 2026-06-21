@@ -1,7 +1,6 @@
 // Configure Monaco Editor base path
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
 
-
 const CONFIG = {
     langName: "ApniZuban",
     keywords: {
@@ -9,6 +8,7 @@ const CONFIG = {
         end: "ikhtitam",
         print: "bolen",
         variable: "ye hai",
+        scanKeyword: "poochen",
         ifKeyword: "agar",
         elseKeyword: "warna",
         whileKeyword: "jab tak",
@@ -24,7 +24,8 @@ const CONFIG = {
     },
     sampleCode: [
         "iftitah",
-        "bolen \"Hello World, This is Apni Zuban.\"",
+        "ye hai naam = poochen(\"Apna naam darj karen:\")",
+        "bolen \"Khush amdeed, \" + naam + \"!\\n\\tYeh Apni Zuban hai.\"",
         "ikhtitam"
     ].join("\n")
 };
@@ -36,6 +37,7 @@ document.getElementById('lang-indicator').innerText = `${CONFIG.langName} Worksp
 const KEYWORD_MAP = {
     [CONFIG.keywords.start]: 'START', [CONFIG.keywords.end]: 'END',
     [CONFIG.keywords.print]: 'PRINT', [CONFIG.keywords.variable]: 'VAR_DEC',
+    [CONFIG.keywords.scanKeyword]: 'SCAN',
     [CONFIG.keywords.ifKeyword]: 'IF', [CONFIG.keywords.elseKeyword]: 'ELSE',
     [CONFIG.keywords.whileKeyword]: 'WHILE', [CONFIG.keywords.forKeyword]: 'FOR',
     [CONFIG.keywords.funcKeyword]: 'FUNC', [CONFIG.keywords.returnKeyword]: 'RETURN',
@@ -45,7 +47,6 @@ const KEYWORD_MAP = {
 };
 
 const KEYWORD_ENTRIES = Object.entries(KEYWORD_MAP).sort((a, b) => b[0].length - a[0].length);
-
 
 class Lexer {
     constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; }
@@ -99,10 +100,16 @@ class Lexer {
             return { type: 'NUMBER', value: Number(numeric[0]) };
         }
 
-        const stringMatch = /^"([^"\n]*)"/.exec(remaining);
+        
+        const stringMatch = /^"((?:[^"\\]|\\.)*)"/.exec(remaining);
         if (stringMatch) {
             this.cursor += stringMatch[0].length;
-            return { type: 'STRING', value: stringMatch[1] };
+            let processedValue = stringMatch[1]
+                .replace(/\\n/g, '\n')
+                .replace(/\\t/g, '\t')
+                .replace(/\\"/g, '"')
+                .replace(/\\\\/g, '\\');
+            return { type: 'STRING', value: processedValue };
         }
 
         const identifier = /^[a-zA-Z_][a-zA-Z0-9_]*/.exec(remaining);
@@ -123,7 +130,6 @@ class Lexer {
         return tokens;
     }
 }
-
 
 class Parser {
     constructor(tokens) { this.tokens = tokens; this.cursor = 0; }
@@ -331,6 +337,18 @@ class Parser {
         const token = this.lookahead();
         if (!token) throw new SyntaxError("Parser Error: Value expected.");
 
+        
+        if (token.type === 'SCAN') {
+            this.eat('SCAN');
+            this.eat('LPAREN');
+            let argument = null;
+            if (!this.match('RPAREN')) {
+                argument = this.parseExpression(); 
+            }
+            this.eat('RPAREN');
+            return { type: 'ScanExpression', argument };
+        }
+
         if (token.type === 'NUMBER' || token.type === 'STRING') { this.eat(token.type); return { type: 'Literal', value: token.value }; }
         if (token.type === 'TRUE') { this.eat('TRUE'); return { type: 'Literal', value: true }; }
         if (token.type === 'FALSE') { this.eat('FALSE'); return { type: 'Literal', value: false }; }
@@ -343,7 +361,6 @@ class Parser {
         throw new SyntaxError(`Parser Error: Unexpected token "${token.value}"`);
     }
 }
-
 
 class Environment {
     constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
@@ -377,6 +394,15 @@ class RuntimeInterpreter {
         switch (node.type) {
             case 'Literal': return node.value;
             case 'Identifier': return this.currentEnv.get(node.name);
+            
+            
+            case 'ScanExpression': {
+                const message = node.argument ? this.evaluateNode(node.argument) : "Enter input:";
+                const userInput = prompt(message);
+                if (userInput === null) return null;
+                return isNaN(userInput) || userInput.trim() === "" ? userInput : Number(userInput);
+            }
+
             case 'BinaryExpression': {
                 const left = this.evaluateNode(node.left);
                 const right = this.evaluateNode(node.right);
@@ -483,7 +509,6 @@ class RuntimeInterpreter {
     }
 }
 
-
 let monacoEditorInstance;
 
 require(['vs/editor/editor.main'], function () {
@@ -550,12 +575,12 @@ window.executeSourceCode = function() {
         const runtimeLogs = new RuntimeInterpreter().interpret(ast);
 
         if (runtimeLogs.length === 0) {
-            terminalScreen.innerHTML = `<div class="terminal-line"><span class="terminal-prompt">></span><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
+            terminalScreen.innerHTML = `<div class="terminal-line"><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
         } else {
             runtimeLogs.forEach(line => {
                 const row = document.createElement('div');
                 row.className = 'terminal-line';
-                row.innerHTML = `<span class="terminal-output"></span>`;
+                row.innerHTML = `<span class="terminal-output" style="white-space: pre-wrap;"></span>`; // Added white-space to preserve tabs and newlines in HTML
                 row.querySelector('.terminal-output').innerText = line;
                 terminalScreen.appendChild(row);
             });
