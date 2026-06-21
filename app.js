@@ -7,7 +7,7 @@ const CONFIG = {
         start: "iftitah",
         end: "ikhtitam",
         print: "bolen",
-        scan: "pooche", // Added scan keyword
+        scan: "pooche", 
         variable: "ye hai",
         ifKeyword: "agar",
         elseKeyword: "warna",
@@ -25,7 +25,7 @@ const CONFIG = {
     sampleCode: [
         "iftitah",
         "ye hai name = pooche",
-        "bolen \"Hello \\\"\" + name + \"\\nThis is a new line.\"",
+        "bolen \"Hello \" + name",
         "ikhtitam"
     ].join("\n")
 };
@@ -48,7 +48,6 @@ const KEYWORD_MAP = {
 
 const KEYWORD_ENTRIES = Object.entries(KEYWORD_MAP).sort((a, b) => b[0].length - a[0].length);
 
-// Helper for escape sequences
 function unescapeString(str) {
     return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 }
@@ -105,7 +104,6 @@ class Lexer {
             return { type: 'NUMBER', value: Number(numeric[0]) };
         }
 
-        // Updated Regex for escape sequences
         const stringMatch = /^"((?:[^"\\]|\\.)*)"/.exec(remaining);
         if (stringMatch) {
             this.cursor += stringMatch[0].length;
@@ -338,7 +336,7 @@ class Parser {
         if (token.type === 'NUMBER' || token.type === 'STRING') { this.eat(token.type); return { type: 'Literal', value: token.value }; }
         if (token.type === 'TRUE') { this.eat('TRUE'); return { type: 'Literal', value: true }; }
         if (token.type === 'FALSE') { this.eat('FALSE'); return { type: 'Literal', value: false }; }
-        if (token.type === 'SCAN') { this.eat('SCAN'); return { type: 'ScanExpression' }; } // Added Scan
+        if (token.type === 'SCAN') { this.eat('SCAN'); return { type: 'ScanExpression' }; } 
         if (token.type === 'LPAREN') {
             this.eat('LPAREN');
             const expr = this.parseExpression();
@@ -377,14 +375,34 @@ class RuntimeInterpreter {
         this.loopProtectionCounter = 0;
     }
 
-    evaluateNode(node) {
+    // Helper: Async input mechanism
+    async waitForUserInput() {
+        const terminal = document.getElementById('terminal-screen');
+        const inputContainer = document.createElement('div');
+        inputContainer.className = 'terminal-line';
+        inputContainer.innerHTML = `<span class="terminal-prompt">?</span><input type="text" id="runtime-input" autofocus style="background:transparent; color:white; border:none; outline:none; font-family:inherit;">`;
+        terminal.appendChild(inputContainer);
+        
+        return new Promise((resolve) => {
+            const inputField = document.getElementById('runtime-input');
+            inputField.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    const val = inputField.value;
+                    inputContainer.remove(); // Remove input after get
+                    resolve(val);
+                }
+            });
+        });
+    }
+
+    async evaluateNode(node) {
         switch (node.type) {
             case 'Literal': return node.value;
             case 'Identifier': return this.currentEnv.get(node.name);
-            case 'ScanExpression': return prompt("Input required:"); // Logic for input
+            case 'ScanExpression': return await this.waitForUserInput(); 
             case 'BinaryExpression': {
-                const left = this.evaluateNode(node.left);
-                const right = this.evaluateNode(node.right);
+                const left = await this.evaluateNode(node.left);
+                const right = await this.evaluateNode(node.right);
                 switch (node.operator) {
                     case '+': return left + right; case '-': return left - right;
                     case '*': return left * right; case '/': return left / right; case '%': return left % right;
@@ -395,15 +413,16 @@ class RuntimeInterpreter {
                 }
             }
             case 'LogicalExpression': {
-                const left = this.evaluateNode(node.left);
-                if (node.operator === 'OR') { if (left) return true; return Boolean(this.evaluateNode(node.right)); }
-                if (node.operator === 'AND') { if (!left) return false; return Boolean(this.evaluateNode(node.right)); }
+                const left = await this.evaluateNode(node.left);
+                if (node.operator === 'OR') { if (left) return true; return Boolean(await this.evaluateNode(node.right)); }
+                if (node.operator === 'AND') { if (!left) return false; return Boolean(await this.evaluateNode(node.right)); }
                 break;
             }
             case 'CallExpression': {
                 if (!this.functions.has(node.callee)) throw new Error(`Function "${node.callee}" is not defined.`);
                 const func = this.functions.get(node.callee);
-                const evaluatedArgs = node.arguments.map(arg => this.evaluateNode(arg));
+                const evaluatedArgs = [];
+                for(let arg of node.arguments) evaluatedArgs.push(await this.evaluateNode(arg));
                 
                 const prevEnv = this.currentEnv;
                 this.currentEnv = new Environment(this.globalEnv);
@@ -413,7 +432,7 @@ class RuntimeInterpreter {
                 });
 
                 let returnValue = null;
-                try { this.executeStatement(func.body); } 
+                try { await this.executeStatement(func.body); } 
                 catch (signal) {
                     if (signal instanceof ReturnSignal) returnValue = signal.value;
                     else throw signal;
@@ -424,42 +443,42 @@ class RuntimeInterpreter {
         }
     }
 
-    executeStatement(node) {
+    async executeStatement(node) {
         this.loopProtectionCounter++;
         if (this.loopProtectionCounter > 15000) throw new Error("🚨 Infinite Loop Protection Triggered! Execution cut-off (> 15,000 steps).");
 
         switch (node.type) {
             case 'BlockStatement':
-                for (let stmt of node.body) this.executeStatement(stmt);
+                for (let stmt of node.body) await this.executeStatement(stmt);
                 break;
             case 'PrintStatement':
-                this.logs.push(String(this.evaluateNode(node.expression)));
+                this.logs.push(String(await this.evaluateNode(node.expression)));
                 break;
             case 'VariableDeclaration':
-                this.currentEnv.define(node.id, this.evaluateNode(node.init));
+                this.currentEnv.define(node.id, await this.evaluateNode(node.init));
                 break;
             case 'AssignmentStatement':
-                this.currentEnv.assign(node.id, this.evaluateNode(node.value));
+                this.currentEnv.assign(node.id, await this.evaluateNode(node.value));
                 break;
             case 'ExpressionStatement':
-                this.evaluateNode(node.expression);
+                await this.evaluateNode(node.expression);
                 break;
             case 'FunctionDeclaration':
                 this.functions.set(node.name, node);
                 break;
             case 'ReturnStatement':
-                throw new ReturnSignal(node.argument ? this.evaluateNode(node.argument) : null);
+                throw new ReturnSignal(node.argument ? await this.evaluateNode(node.argument) : null);
             case 'BreakStatement':
                 throw new BreakSignal();
             case 'ContinueStatement':
                 throw new ContinueSignal();
             case 'IfStatement':
-                if (this.evaluateNode(node.condition)) this.executeStatement(node.consequent);
-                else if (node.alternate) this.executeStatement(node.alternate);
+                if (await this.evaluateNode(node.condition)) await this.executeStatement(node.consequent);
+                else if (node.alternate) await this.executeStatement(node.alternate);
                 break;
             case 'WhileStatement':
-                while (this.evaluateNode(node.condition)) {
-                    try { this.executeStatement(node.body); }
+                while (await this.evaluateNode(node.condition)) {
+                    try { await this.executeStatement(node.body); }
                     catch (signal) {
                         if (signal instanceof BreakSignal) break;
                         if (signal instanceof ContinueSignal) continue;
@@ -468,22 +487,22 @@ class RuntimeInterpreter {
                 }
                 break;
             case 'ForStatement':
-                if (node.init) this.executeStatement(node.init);
-                while (!node.condition || this.evaluateNode(node.condition)) {
-                    try { this.executeStatement(node.body); }
+                if (node.init) await this.executeStatement(node.init);
+                while (!node.condition || await this.evaluateNode(node.condition)) {
+                    try { await this.executeStatement(node.body); }
                     catch (signal) {
                         if (signal instanceof BreakSignal) break;
                         if (signal instanceof ContinueSignal) { /* proceed to update */ }
                         else throw signal;
                     }
-                    if (node.update) this.executeStatement(node.update);
+                    if (node.update) await this.executeStatement(node.update);
                 }
                 break;
         }
     }
 
-    interpret(ast) {
-        for (let stmt of ast.body) this.executeStatement(stmt);
+    async interpret(ast) {
+        for (let stmt of ast.body) await this.executeStatement(stmt);
         return this.logs;
     }
 }
@@ -500,7 +519,7 @@ require(['vs/editor/editor.main'], function () {
         tokenizer: {
             root: [
                 [new RegExp(`\\b(${keywordsToMatch})\\b`), 'keyword'],
-                [/"((?:[^"\\]|\\.)*)"/, 'string'], // Updated regex for editor
+                [/"((?:[^"\\]|\\.)*)"/, 'string'],
                 [ /\/\/.*/, 'comment' ],
                 [/\d+(\.\d+)?/, 'number'],
                 [/[a-zA-Z_][a-zA-Z0-9_]*/, 'identifier'],
@@ -543,7 +562,8 @@ require(['vs/editor/editor.main'], function () {
 
 window.clearConsole = function() { document.getElementById('terminal-screen').innerHTML = ''; }
 
-window.executeSourceCode = function() {
+// Changed to async function
+window.executeSourceCode = async function() {
     const terminalScreen = document.getElementById('terminal-screen');
     const codeInputString = monacoEditorInstance.getValue();
     clearConsole();
@@ -551,7 +571,7 @@ window.executeSourceCode = function() {
     try {
         const tokens = new Lexer(codeInputString).tokenize();
         const ast = new Parser(tokens).parse();
-        const runtimeLogs = new RuntimeInterpreter().interpret(ast);
+        const runtimeLogs = await new RuntimeInterpreter().interpret(ast);
 
         if (runtimeLogs.length === 0) {
             terminalScreen.innerHTML = `<div class="terminal-line"><span class="terminal-prompt">></span><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
