@@ -7,7 +7,7 @@ const CONFIG = {
         start: "iftitah",
         end: "ikhtitam",
         print: "bolen",
-        scan: "pooche", 
+        scan: "poochen", 
         variable: "ye hai",
         ifKeyword: "agar",
         elseKeyword: "warna",
@@ -24,8 +24,8 @@ const CONFIG = {
     },
     sampleCode: [
         "iftitah",
-        "ye hai name = pooche",
-        "bolen \"Hello \" + name",
+        "ye hai naam = poochen(\"Enter your name: \")",
+        "bolen (\"Welcome \" + naam + \"! \n\tYe hai Apni Zuban!\")",
         "ikhtitam"
     ].join("\n")
 };
@@ -336,7 +336,19 @@ class Parser {
         if (token.type === 'NUMBER' || token.type === 'STRING') { this.eat(token.type); return { type: 'Literal', value: token.value }; }
         if (token.type === 'TRUE') { this.eat('TRUE'); return { type: 'Literal', value: true }; }
         if (token.type === 'FALSE') { this.eat('FALSE'); return { type: 'Literal', value: false }; }
-        if (token.type === 'SCAN') { this.eat('SCAN'); return { type: 'ScanExpression' }; } 
+        
+        // Scan with optional prompt: poochen("prompt")
+        if (token.type === 'SCAN') { 
+            this.eat('SCAN'); 
+            let promptNode = null;
+            if (this.match('LPAREN')) {
+                this.eat('LPAREN');
+                promptNode = this.parseExpression();
+                this.eat('RPAREN');
+            }
+            return { type: 'ScanExpression', prompt: promptNode }; 
+        } 
+
         if (token.type === 'LPAREN') {
             this.eat('LPAREN');
             const expr = this.parseExpression();
@@ -375,12 +387,16 @@ class RuntimeInterpreter {
         this.loopProtectionCounter = 0;
     }
 
-    // Helper: Async input mechanism
-    async waitForUserInput() {
+    async waitForUserInput(promptText = "") {
         const terminal = document.getElementById('terminal-screen');
+        
         const inputContainer = document.createElement('div');
         inputContainer.className = 'terminal-line';
-        inputContainer.innerHTML = `<span class="terminal-prompt">?</span><input type="text" id="runtime-input" autofocus style="background:transparent; color:white; border:none; outline:none; font-family:inherit;">`;
+        
+        // Display prompt if provided, otherwise default
+        const promptLabel = promptText ? `<span class="terminal-prompt" style="color: #8b5cf6;">${promptText}</span>` : `<span class="terminal-prompt">></span>`;
+        
+        inputContainer.innerHTML = `${promptLabel}<input type="text" id="runtime-input" autofocus style="background:transparent; color:white; border:none; outline:none; font-family:inherit; margin-left: 5px;">`;
         terminal.appendChild(inputContainer);
         
         return new Promise((resolve) => {
@@ -388,7 +404,7 @@ class RuntimeInterpreter {
             inputField.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     const val = inputField.value;
-                    inputContainer.remove(); // Remove input after get
+                    inputContainer.remove(); 
                     resolve(val);
                 }
             });
@@ -399,7 +415,10 @@ class RuntimeInterpreter {
         switch (node.type) {
             case 'Literal': return node.value;
             case 'Identifier': return this.currentEnv.get(node.name);
-            case 'ScanExpression': return await this.waitForUserInput(); 
+            case 'ScanExpression': 
+                let promptText = "";
+                if (node.prompt) promptText = await this.evaluateNode(node.prompt);
+                return await this.waitForUserInput(promptText); 
             case 'BinaryExpression': {
                 const left = await this.evaluateNode(node.left);
                 const right = await this.evaluateNode(node.right);
@@ -471,7 +490,7 @@ class RuntimeInterpreter {
             case 'BreakStatement':
                 throw new BreakSignal();
             case 'ContinueStatement':
-                throw new ContinueSignal();
+                throw new ContinueStatement();
             case 'IfStatement':
                 if (await this.evaluateNode(node.condition)) await this.executeStatement(node.consequent);
                 else if (node.alternate) await this.executeStatement(node.alternate);
@@ -562,7 +581,6 @@ require(['vs/editor/editor.main'], function () {
 
 window.clearConsole = function() { document.getElementById('terminal-screen').innerHTML = ''; }
 
-// Changed to async function
 window.executeSourceCode = async function() {
     const terminalScreen = document.getElementById('terminal-screen');
     const codeInputString = monacoEditorInstance.getValue();
