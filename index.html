@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ApniZuban 6-Phase Compiler</title>
+    <title>Ultimate Custom Language Playground</title>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,12 +17,12 @@
 
     <header>
         <div class="logo-section">
-            <h1 id="app-title">LangEngine <span>6-Phase Compiler</span></h1>
+            <h1 id="app-title">LangEngine <span>Ultimate Core</span></h1>
         </div>
         <div class="controls">
             <button class="btn-run" onclick="executeSourceCode()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                Compile & Execute
+                Compile & Run
             </button>
         </div>
     </header>
@@ -30,25 +30,25 @@
     <div class="workspace">
         <div class="pane pane-left">
             <div class="pane-header">
-                <div>Source Code (Input)</div>
-                <div id="lang-indicator" style="color: #8b5cf6;">Compiler Ready</div>
+                <div>Source Code</div>
+                <div id="lang-indicator" style="color: #8b5cf6;">Ultimate Sandbox</div>
             </div>
             <div id="editor-container"></div>
         </div>
 
         <div class="pane">
             <div class="pane-header">
-                <div>Compilation Output & Execution</div>
+                <div>Console Terminal Output</div>
                 <div style="cursor:pointer; color:#ef4444;" onclick="clearConsole()">Clear Console</div>
             </div>
             <div id="terminal-screen" class="terminal-container">
-                <div class="terminal-line terminal-welcome">/* ApniZuban 6-Phase Compiler loaded and ready. */</div>
+                <div class="terminal-line terminal-welcome">/* Engine loaded: Functions, For-Loops, Scope, Arrays, Logic & Breaks activated. */</div>
             </div>
         </div>
     </div>
 
     <div class="config-hint">
-        <div>� <strong>6-Phase Compiler Mode:</strong> Lexical Analysis → Syntax Analysis → Semantic Analysis → Intermediate Code Gen → Optimization → Bytecode Execution. Full compilation pipeline enabled!</div>
+        <div>💡 <strong>Ultimate Mode:</strong> Functions, parameters, scope, return, break/continue, AND/OR logic are fully implemented. Check <span class="config-tag">CONFIG</span> in app.js to change keywords!</div>
     </div>
 
     <script src="app.js"></script>
