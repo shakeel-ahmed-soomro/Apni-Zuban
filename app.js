@@ -1,4 +1,4 @@
-// Configure Monaco Editor base path
+// --- INITIALIZATION & CONFIGURATION ---
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
 
 const CONFIG = {
@@ -48,13 +48,10 @@ const KEYWORD_MAP = {
 
 const KEYWORD_ENTRIES = Object.entries(KEYWORD_MAP).sort((a, b) => b[0].length - a[0].length);
 
+// --- PHASE 1: LEXICAL ANALYSIS (LEXER) ---
+// Converts raw source code into a stream of meaningful tokens.
 class Lexer {
-    constructor(sourceCode) { 
-        this.source = sourceCode; 
-        this.cursor = 0;
-        this.line = 1;
-        this.column = 1;
-    }
+    constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; }
     hasMoreTokens() { return this.cursor < this.source.length; }
 
     getNextToken() {
@@ -63,37 +60,24 @@ class Lexer {
 
         const wsOrComment = /^(?:\s+|\/\/[^\n]*)+/.exec(remaining);
         if (wsOrComment) {
-            const matched = wsOrComment[0];
-            for (let char of matched) {
-                if (char === '\n') {
-                    this.line++;
-                    this.column = 1;
-                } else {
-                    this.column++;
-                }
-            }
-            this.cursor += matched.length;
+            this.cursor += wsOrComment[0].length;
             return this.getNextToken();
         }
-
-        const startLine = this.line;
-        const startColumn = this.column;
 
         for (let [keywordString, tokenType] of KEYWORD_ENTRIES) {
             if (remaining.startsWith(keywordString)) {
                 const nextChar = remaining[keywordString.length];
                 if (!nextChar || !/[a-zA-Z0-9_]/.test(nextChar)) {
                     this.cursor += keywordString.length;
-                    this.column += keywordString.length;
-                    return { type: tokenType, value: keywordString, line: startLine, column: startColumn };
+                    return { type: tokenType, value: keywordString };
                 }
             }
         }
 
-        if (remaining.startsWith('==')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '==', line: startLine, column: startColumn }; }
-        if (remaining.startsWith('!=')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '!=', line: startLine, column: startColumn }; }
-        if (remaining.startsWith('<=')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '<=', line: startLine, column: startColumn }; }
-        if (remaining.startsWith('>=')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '>=', line: startLine, column: startColumn }; }
+        if (remaining.startsWith('==')) { this.cursor += 2; return { type: 'COMP_OP', value: '==' }; }
+        if (remaining.startsWith('!=')) { this.cursor += 2; return { type: 'COMP_OP', value: '!=' }; }
+        if (remaining.startsWith('<=')) { this.cursor += 2; return { type: 'COMP_OP', value: '<=' }; }
+        if (remaining.startsWith('>=')) { this.cursor += 2; return { type: 'COMP_OP', value: '>=' }; }
 
         const singleCharTokens = [
             { str: '<', type: 'COMP_OP' }, { str: '>', type: 'COMP_OP' },
@@ -108,39 +92,34 @@ class Lexer {
         for (let tc of singleCharTokens) {
             if (remaining.startsWith(tc.str)) {
                 this.cursor += tc.str.length;
-                this.column += tc.str.length;
-                return { type: tc.type, value: tc.str, line: startLine, column: startColumn };
+                return { type: tc.type, value: tc.str };
             }
         }
 
         const numeric = /^\d+(\.\d+)?/.exec(remaining);
         if (numeric) {
             this.cursor += numeric[0].length;
-            this.column += numeric[0].length;
-            return { type: 'NUMBER', value: Number(numeric[0]), line: startLine, column: startColumn };
+            return { type: 'NUMBER', value: Number(numeric[0]) };
         }
 
-        
         const stringMatch = /^"((?:[^"\\]|\\.)*)"/.exec(remaining);
         if (stringMatch) {
             this.cursor += stringMatch[0].length;
-            this.column += stringMatch[0].length;
             let processedValue = stringMatch[1]
                 .replace(/\\n/g, '\n')
                 .replace(/\\t/g, '\t')
                 .replace(/\\"/g, '"')
                 .replace(/\\\\/g, '\\');
-            return { type: 'STRING', value: processedValue, line: startLine, column: startColumn };
+            return { type: 'STRING', value: processedValue };
         }
 
         const identifier = /^[a-zA-Z_][a-zA-Z0-9_]*/.exec(remaining);
         if (identifier) {
             this.cursor += identifier[0].length;
-            this.column += identifier[0].length;
-            return { type: 'IDENTIFIER', value: identifier[0], line: startLine, column: startColumn };
+            return { type: 'IDENTIFIER', value: identifier[0] };
         }
 
-        throw new SyntaxError(`Lexical Analyzer Error near: "${remaining.slice(0, 15)}..." at line ${startLine}`);
+        throw new SyntaxError(`Lexical Analyzer Error near: "${remaining.slice(0, 15)}..."`);
     }
 
     tokenize() {
@@ -153,6 +132,8 @@ class Lexer {
     }
 }
 
+// --- PHASE 2: SYNTAX ANALYSIS (PARSER) ---
+// Reads tokens and builds an Abstract Syntax Tree (AST) representing the program's grammatical structure.
 class Parser {
     constructor(tokens) { this.tokens = tokens; this.cursor = 0; }
     lookahead() { return this.tokens[this.cursor] || null; }
@@ -211,46 +192,41 @@ class Parser {
     }
 
     parsePrintStatement() {
-        const startToken = this.lookahead();
         this.eat('PRINT');
-        return { type: 'PrintStatement', expression: this.parseExpression(), line: startToken.line };
+        return { type: 'PrintStatement', expression: this.parseExpression() };
     }
 
     parseVariableDeclaration() {
-        const startToken = this.lookahead();
         this.eat('VAR_DEC');
         const idToken = this.eat('IDENTIFIER');
         this.eat('ASSIGN');
-        return { type: 'VariableDeclaration', id: idToken.value, init: this.parseExpression(), line: startToken.line };
+        return { type: 'VariableDeclaration', id: idToken.value, init: this.parseExpression() };
     }
 
     parseAssignmentStatement() {
         const idToken = this.eat('IDENTIFIER');
         this.eat('ASSIGN');
-        return { type: 'AssignmentStatement', id: idToken.value, value: this.parseExpression(), line: idToken.line };
+        return { type: 'AssignmentStatement', id: idToken.value, value: this.parseExpression() };
     }
 
     parseIfStatement() {
-        const startToken = this.lookahead();
         this.eat('IF'); this.eat('LPAREN');
         const condition = this.parseExpression();
         this.eat('RPAREN');
         const consequent = this.parseStatement();
         let alternate = null;
         if (this.match('ELSE')) { this.eat('ELSE'); alternate = this.parseStatement(); }
-        return { type: 'IfStatement', condition, consequent, alternate, line: startToken.line };
+        return { type: 'IfStatement', condition, consequent, alternate };
     }
 
     parseWhileStatement() {
-        const startToken = this.lookahead();
         this.eat('WHILE'); this.eat('LPAREN');
         const condition = this.parseExpression();
         this.eat('RPAREN');
-        return { type: 'WhileStatement', condition, body: this.parseStatement(), line: startToken.line };
+        return { type: 'WhileStatement', condition, body: this.parseStatement() };
     }
 
     parseForStatement() {
-        const startToken = this.lookahead();
         this.eat('FOR'); this.eat('LPAREN');
         let init = null;
         if (!this.match('SEMI')) {
@@ -264,11 +240,10 @@ class Parser {
         let update = null;
         if (!this.match('RPAREN')) update = this.parseAssignmentStatement();
         this.eat('RPAREN');
-        return { type: 'ForStatement', init, condition, update, body: this.parseStatement(), line: startToken.line };
+        return { type: 'ForStatement', init, condition, update, body: this.parseStatement() };
     }
 
     parseFunctionDeclaration() {
-        const startToken = this.lookahead();
         this.eat('FUNC');
         const nameToken = this.eat('IDENTIFIER');
         this.eat('LPAREN');
@@ -278,19 +253,18 @@ class Parser {
             while (this.match('COMMA')) { this.eat('COMMA'); params.push(this.eat('IDENTIFIER').value); }
         }
         this.eat('RPAREN');
-        return { type: 'FunctionDeclaration', name: nameToken.value, params, body: this.parseBlockStatement(), line: startToken.line };
+        return { type: 'FunctionDeclaration', name: nameToken.value, params, body: this.parseBlockStatement() };
     }
 
     parseReturnStatement() {
-        const startToken = this.lookahead();
         this.eat('RETURN');
         let argument = null;
         if (!this.match('RBRACE') && !this.match('END') && !this.match('SEMI')) argument = this.parseExpression();
-        return { type: 'ReturnStatement', argument, line: startToken.line };
+        return { type: 'ReturnStatement', argument };
     }
 
-    parseBreakStatement() { const startToken = this.lookahead(); this.eat('BREAK'); return { type: 'BreakStatement', line: startToken.line }; }
-    parseContinueStatement() { const startToken = this.lookahead(); this.eat('CONTINUE'); return { type: 'ContinueStatement', line: startToken.line }; }
+    parseBreakStatement() { this.eat('BREAK'); return { type: 'BreakStatement' }; }
+    parseContinueStatement() { this.eat('CONTINUE'); return { type: 'ContinueStatement' }; }
 
     parseExpression() { return this.parseLogicalOrExpression(); }
 
@@ -366,7 +340,6 @@ class Parser {
         const token = this.lookahead();
         if (!token) throw new SyntaxError("Parser Error: Value expected.");
 
-        
         if (token.type === 'SCAN') {
             this.eat('SCAN');
             this.eat('LPAREN');
@@ -391,6 +364,8 @@ class Parser {
     }
 }
 
+// --- PHASE 3: ENVIRONMENT & STATE MANAGEMENT ---
+// Manages variables, scopes, and memory bounds during execution.
 class Environment {
     constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
     define(name, value) { this.vars.set(name, value); }
@@ -410,519 +385,67 @@ class ReturnSignal extends Error { constructor(value) { super(); this.value = va
 class BreakSignal extends Error {}
 class ContinueSignal extends Error {}
 
-// ============================================================
-// PHASE 3: SEMANTIC ANALYZER
-// ============================================================
-class SymbolTable {
-    constructor(parent = null) {
-        this.symbols = new Map();
-        this.parent = parent;
-        this.scope = 'global';
-    }
-
-    define(name, type, kind = 'variable') {
-        if (this.symbols.has(name)) throw new Error(`Semantic Error: Symbol "${name}" already defined in current scope.`);
-        this.symbols.set(name, { type, kind, defined: true });
-    }
-
-    lookup(name) {
-        if (this.symbols.has(name)) return this.symbols.get(name);
-        if (this.parent) return this.parent.lookup(name);
-        return null;
-    }
-
-    exists(name) {
-        return this.lookup(name) !== null;
-    }
-
-    createChildScope() {
-        return new SymbolTable(this);
-    }
-}
-
-class SemanticAnalyzer {
-    constructor() {
-        this.globalSymbolTable = new SymbolTable();
-        this.currentSymbolTable = this.globalSymbolTable;
-        this.errors = [];
-        this.nodeSymbolMap = new Map();
-    }
-
-    analyze(ast) {
-        this.visitProgram(ast);
-        if (this.errors.length > 0) {
-            const errorMessage = `Semantic Errors Found (${this.errors.length}):\n${this.errors.map((err, idx) => `${idx + 1}. ${err}`).join('\n')}`;
-            throw new Error(errorMessage);
-        }
-        return { ast, symbolTable: this.globalSymbolTable, nodeSymbolMap: this.nodeSymbolMap };
-    }
-
-    visitProgram(node) {
-        for (let stmt of node.body) this.visitStatement(stmt);
-    }
-
-    visitStatement(node) {
-        switch (node.type) {
-            case 'VariableDeclaration':
-                if (this.currentSymbolTable.symbols.has(node.id)) {
-                    this.errors.push(`[Line ${node.line}] Variable "${node.id}" redeclared in same scope.`);
-                } else {
-                    this.currentSymbolTable.define(node.id, 'dynamic', 'variable');
-                }
-                if (node.init) this.visitExpression(node.init);
-                break;
-            case 'FunctionDeclaration':
-                if (this.currentSymbolTable.symbols.has(node.name)) {
-                    this.errors.push(`[Line ${node.line}] Function "${node.name}" redeclared in same scope.`);
-                } else {
-                    this.currentSymbolTable.define(node.name, 'function', 'function');
-                }
-                const funcScope = this.currentSymbolTable.createChildScope();
-                funcScope.scope = `function:${node.name}`;
-                const prevTable = this.currentSymbolTable;
-                this.currentSymbolTable = funcScope;
-                for (let param of node.params) {
-                    this.currentSymbolTable.define(param, 'dynamic', 'parameter');
-                }
-                this.visitStatement(node.body);
-                this.currentSymbolTable = prevTable;
-                break;
-            case 'BlockStatement':
-                const blockScope = this.currentSymbolTable.createChildScope();
-                blockScope.scope = 'block';
-                const prevTable2 = this.currentSymbolTable;
-                this.currentSymbolTable = blockScope;
-                for (let stmt of node.body) this.visitStatement(stmt);
-                this.currentSymbolTable = prevTable2;
-                break;
-            case 'PrintStatement':
-                this.visitExpression(node.expression);
-                break;
-            case 'AssignmentStatement':
-                if (!this.currentSymbolTable.exists(node.id)) {
-                    this.errors.push(`[Line ${node.line}] Undefined variable: "${node.id}"`);
-                } else {
-                    const sym = this.currentSymbolTable.lookup(node.id);
-                    if (sym.kind === 'function') this.errors.push(`[Line ${node.line}] Cannot assign to function: "${node.id}"`);
-                }
-                this.visitExpression(node.value);
-                break;
-            case 'IfStatement':
-                this.visitExpression(node.condition);
-                this.visitStatement(node.consequent);
-                if (node.alternate) this.visitStatement(node.alternate);
-                break;
-            case 'WhileStatement':
-                this.visitExpression(node.condition);
-                this.visitStatement(node.body);
-                break;
-            case 'ForStatement':
-                const forScope = this.currentSymbolTable.createChildScope();
-                forScope.scope = 'for-loop';
-                const prevTable3 = this.currentSymbolTable;
-                this.currentSymbolTable = forScope;
-                if (node.init) this.visitStatement(node.init);
-                if (node.condition) this.visitExpression(node.condition);
-                if (node.update) this.visitStatement(node.update);
-                this.visitStatement(node.body);
-                this.currentSymbolTable = prevTable3;
-                break;
-            case 'ExpressionStatement':
-                this.visitExpression(node.expression);
-                break;
-            case 'ReturnStatement':
-                if (node.argument) this.visitExpression(node.argument);
-                break;
-        }
-    }
-
-    visitExpression(node) {
-        switch (node.type) {
-            case 'Identifier':
-                if (!this.currentSymbolTable.exists(node.name)) {
-                    this.errors.push(`[Line ${node.line || '?'}] Undefined variable: "${node.name}"`);
-                }
-                break;
-            case 'BinaryExpression':
-                this.visitExpression(node.left);
-                this.visitExpression(node.right);
-                break;
-            case 'LogicalExpression':
-                this.visitExpression(node.left);
-                this.visitExpression(node.right);
-                break;
-            case 'CallExpression':
-                if (!this.currentSymbolTable.exists(node.callee)) {
-                    this.errors.push(`[Line ${node.line || '?'}] Undefined function: "${node.callee}"`);
-                }
-                for (let arg of node.arguments) this.visitExpression(arg);
-                break;
-            case 'ScanExpression':
-                if (node.argument) this.visitExpression(node.argument);
-                break;
-        }
-    }
-}
-
-// ============================================================
-// PHASE 4: INTERMEDIATE CODE GENERATOR (3-Address Code)
-// ============================================================
-class IntermediateCodeGenerator {
-    constructor() {
-        this.code = [];
-        this.tempCounter = 0;
-        this.labelCounter = 0;
-    }
-
-    generate(ast) {
-        this.visitProgram(ast);
-        return this.code;
-    }
-
-    newTemp() {
-        return `$t${this.tempCounter++}`;
-    }
-
-    newLabel() {
-        return `L${this.labelCounter++}`;
-    }
-
-    emit(op, arg1 = null, arg2 = null, result = null, operator = null) {
-        const instr = { op, arg1, arg2, result, index: this.code.length };
-        if (operator) instr.operator = operator;
-        this.code.push(instr);
-    }
-
-    visitProgram(node) {
-        for (let stmt of node.body) this.visitStatement(stmt);
-    }
-
-    visitStatement(node) {
-        switch (node.type) {
-            case 'VariableDeclaration':
-                if (node.init) {
-                    const temp = this.visitExpression(node.init);
-                    this.emit('ASSIGN', temp, null, node.id);
-                }
-                break;
-            case 'PrintStatement':
-                const val = this.visitExpression(node.expression);
-                this.emit('PRINT', val);
-                break;
-            case 'AssignmentStatement':
-                const exprVal = this.visitExpression(node.value);
-                this.emit('ASSIGN', exprVal, null, node.id);
-                break;
-            case 'FunctionDeclaration':
-                const startLabel = this.newLabel();
-                const endLabel = this.newLabel();
-                this.emit('FUNC_DECL', node.name, node.params.length, startLabel);
-                this.visitStatement(node.body);
-                this.emit('FUNC_END', node.name);
-                break;
-            case 'BlockStatement':
-                for (let stmt of node.body) this.visitStatement(stmt);
-                break;
-            case 'IfStatement':
-                const falseLabel = this.newLabel();
-                const endLabel2 = this.newLabel();
-                const condition = this.visitExpression(node.condition);
-                this.emit('JF', condition, falseLabel);
-                this.visitStatement(node.consequent);
-                this.emit('JMP', endLabel2);
-                this.code.push({ label: falseLabel });
-                if (node.alternate) this.visitStatement(node.alternate);
-                this.code.push({ label: endLabel2 });
-                break;
-            case 'WhileStatement':
-                const loopLabel = this.newLabel();
-                const exitLabel = this.newLabel();
-                this.code.push({ label: loopLabel });
-                const whileCond = this.visitExpression(node.condition);
-                this.emit('JF', whileCond, exitLabel);
-                this.visitStatement(node.body);
-                this.emit('JMP', loopLabel);
-                this.code.push({ label: exitLabel });
-                break;
-            case 'ExpressionStatement':
-                this.visitExpression(node.expression);
-                break;
-        }
-    }
-
-    visitExpression(node) {
-        switch (node.type) {
-            case 'Literal':
-                return node.value;
-            case 'Identifier':
-                return node.name;
-            case 'BinaryExpression':
-                const left = this.visitExpression(node.left);
-                const right = this.visitExpression(node.right);
-                const temp = this.newTemp();
-                this.emit('BINOP', left, right, temp, node.operator);
-                return temp;
-            case 'LogicalExpression':
-                const leftLog = this.visitExpression(node.left);
-                const rightLog = this.visitExpression(node.right);
-                const tempLog = this.newTemp();
-                this.emit('LOGOP', leftLog, rightLog, tempLog, node.operator);
-                return tempLog;
-            case 'CallExpression':
-                const args = node.arguments.map(arg => this.visitExpression(arg));
-                const callTemp = this.newTemp();
-                this.emit('CALL', node.callee, args.length, callTemp);
-                args.forEach((arg, idx) => this.emit('PUSH_ARG', arg, idx));
-                return callTemp;
-            case 'ScanExpression':
-                const scanTemp = this.newTemp();
-                this.emit('SCAN', node.argument || null, null, scanTemp);
-                return scanTemp;
-            default:
-                return null;
-        }
-    }
-}
-
-// ============================================================
-// PHASE 5: CODE OPTIMIZER
-// ============================================================
-class CodeOptimizer {
-    optimize(intermediateCode) {
-        let optimized = [...intermediateCode];
-        optimized = this.deadCodeElimination(optimized);
-        optimized = this.constantFolding(optimized);
-        return optimized;
-    }
-
-    deadCodeElimination(code) {
-        const reachable = new Set();
-        let pc = 0;
-        while (pc < code.length) {
-            const instr = code[pc];
-            if (!instr.op) { pc++; continue; }
-            reachable.add(pc);
-            if (instr.op === 'JMP' || instr.op === 'RETURN') pc = code.length;
-            else pc++;
-        }
-        return code.filter((_, idx) => reachable.has(idx) || !code[idx].op);
-    }
-
-    constantFolding(code) {
-        const constants = new Map();
-        return code.map(instr => {
-            if (!instr.op) return instr;
-            if (instr.op === 'BINOP' && typeof instr.arg1 === 'number' && typeof instr.arg2 === 'number') {
-                let result;
-                switch (instr.result) {
-                    case '+': result = instr.arg1 + instr.arg2; break;
-                    case '-': result = instr.arg1 - instr.arg2; break;
-                    case '*': result = instr.arg1 * instr.arg2; break;
-                    case '/': result = instr.arg1 / instr.arg2; break;
-                    default: return instr;
-                }
-                constants.set(instr.result, result);
-                return { ...instr, result };
-            }
-            return instr;
-        });
-    }
-}
-
-// ============================================================
-// PHASE 6: BYTECODE GENERATOR & VIRTUAL MACHINE
-// ============================================================
-class BytecodeGenerator {
-    constructor() {
-        this.bytecode = [];
-        this.symbolTable = new Map();
-    }
-
-    generateBytecode(intermediateCode) {
-        this.bytecode = intermediateCode.map((instr, idx) => ({
-            addr: idx,
-            ...instr
-        }));
-        return this.bytecode;
-    }
-}
-
-class VirtualMachine {
-    constructor(bytecode, inputCallback) {
-        this.bytecode = bytecode;
-        this.pc = 0;
-        this.stack = [];
-        this.memory = new Map();
-        this.functions = new Map();
-        this.logs = [];
-        this.stepCount = 0;
-        this.maxSteps = 15000;
-        this.inputCallback = inputCallback;
-        this.isWaitingForInput = false;
-    }
-
-    async execute() {
-        while (this.pc < this.bytecode.length && this.stepCount < this.maxSteps) {
-            const instr = this.bytecode[this.pc];
-            if (!instr.op) { this.pc++; continue; }
-
-            this.stepCount++;
-
-            switch (instr.op) {
-                case 'PRINT':
-                    const valToPrint = this.resolveValue(instr.arg1);
-                    this.logs.push(String(valToPrint));
-                    break;
-                case 'ASSIGN':
-                    const val = this.resolveValue(instr.arg1);
-                    this.memory.set(instr.result, val);
-                    break;
-                case 'BINOP':
-                    const left = this.resolveValue(instr.arg1);
-                    const right = this.resolveValue(instr.arg2);
-                    let opResult;
-                    switch (instr.operator) {
-                        case '+': opResult = left + right; break;
-                        case '-': opResult = left - right; break;
-                        case '*': opResult = left * right; break;
-                        case '/': opResult = left / right; break;
-                        case '%': opResult = left % right; break;
-                        case '==': opResult = left == right; break;
-                        case '!=': opResult = left != right; break;
-                        case '<': opResult = left < right; break;
-                        case '>': opResult = left > right; break;
-                        case '<=': opResult = left <= right; break;
-                        case '>=': opResult = left >= right; break;
-                    }
-                    this.memory.set(instr.result, opResult);
-                    break;
-                case 'LOGOP':
-                    const leftL = this.resolveValue(instr.arg1);
-                    const rightL = this.resolveValue(instr.arg2);
-                    let logResult;
-                    if (instr.operator === 'OR') {
-                        logResult = leftL || rightL;
-                    } else if (instr.operator === 'AND') {
-                        logResult = leftL && rightL;
-                    }
-                    this.memory.set(instr.result, logResult);
-                    break;
-                case 'JF':
-                    if (!this.resolveValue(instr.arg1)) {
-                        this.pc = this.findLabel(instr.arg2);
-                        continue;
-                    }
-                    break;
-                case 'JMP':
-                    this.pc = this.findLabel(instr.arg1);
-                    continue;
-                case 'SCAN':
-                    const prompt_msg = instr.arg1 ? this.resolveValue(instr.arg1) : "Enter:";
-                    const input = await this.inputCallback(prompt_msg);
-                    this.memory.set(instr.result, isNaN(input) ? input : Number(input));
-                    break;
-            }
-            this.pc++;
-        }
-
-        if (this.stepCount >= this.maxSteps) {
-            throw new Error("🚨 Infinite Loop Protection Triggered! Execution cut-off (> 15,000 steps).");
-        }
-
-        return this.logs;
-    }
-
-    resolveValue(val) {
-        if (typeof val === 'number' || typeof val === 'string' || typeof val === 'boolean') return val;
-        if (this.memory.has(val)) return this.memory.get(val);
-        return val;
-    }
-
-    findLabel(labelName) {
-        for (let i = 0; i < this.bytecode.length; i++) {
-            if (this.bytecode[i].label === labelName) return i;
-        }
-        return this.pc + 1;
-    }
-}
-
-// ============================================================
-// COMPLETE COMPILER (6 PHASES)
-// ============================================================
-class CompleteCompiler {
-    constructor(inputCallback) {
-        this.phases = [];
-        this.inputCallback = inputCallback;
-    }
-
-    async compile(sourceCode) {
-        try {
-            // PHASE 1: Lexical Analysis
-            const lexer = new Lexer(sourceCode);
-            const tokens = lexer.tokenize();
-            this.phases.push({ phase: 1, name: 'Lexical Analysis', tokens: tokens.slice(0, 10) });
-
-            // PHASE 2: Syntax Analysis  
-            const parser = new Parser(tokens);
-            const ast = parser.parse();
-            this.phases.push({ phase: 2, name: 'Syntax Analysis (AST Generated)', success: true });
-
-            // PHASE 3: Semantic Analysis
-            const semanticAnalyzer = new SemanticAnalyzer();
-            const { symbolTable } = semanticAnalyzer.analyze(ast);
-            this.phases.push({ phase: 3, name: 'Semantic Analysis', symbols: symbolTable.symbols.size });
-
-            // PHASE 4: Intermediate Code Generation
-            const icGenerator = new IntermediateCodeGenerator();
-            const intermediateCode = icGenerator.generate(ast);
-            this.phases.push({ phase: 4, name: 'Intermediate Code Generation', instructions: intermediateCode.length });
-
-            // PHASE 5: Code Optimization
-            const optimizer = new CodeOptimizer();
-            const optimizedCode = optimizer.optimize(intermediateCode);
-            this.phases.push({ phase: 5, name: 'Code Optimization', optimized: true });
-
-            // PHASE 6: Bytecode Generation & Execution
-            const bcGenerator = new BytecodeGenerator();
-            const bytecode = bcGenerator.generateBytecode(optimizedCode);
-            this.phases.push({ phase: 6, name: 'Bytecode Generation', bytecodeSize: bytecode.length });
-
-            const vm = new VirtualMachine(bytecode, this.inputCallback);
-            const results = await vm.execute();
-
-            return { success: true, output: results, phases: this.phases };
-        } catch (err) {
-            return { success: false, error: err.message, phases: this.phases };
-        }
-    }
-}
-
-// Legacy Interpreter (kept for backward compatibility)
+// --- PHASE 4: INTERPRETATION & EXECUTION ---
+// Walks through the AST asynchronously, allowing for direct HTML console interaction.
 class RuntimeInterpreter {
     constructor() {
         this.globalEnv = new Environment();
         this.currentEnv = this.globalEnv;
-        this.logs = [];
         this.functions = new Map();
         this.loopProtectionCounter = 0;
     }
 
-    evaluateNode(node) {
+    // Prints standard output straight to the HTML console box
+    printToTerminal(text) {
+        const terminalScreen = document.getElementById('terminal-screen');
+        const row = document.createElement('div');
+        row.className = 'terminal-line';
+        row.innerHTML = `<span class="terminal-output" style="white-space: pre-wrap;"></span>`; 
+        row.querySelector('.terminal-output').innerText = text;
+        terminalScreen.appendChild(row);
+        terminalScreen.scrollTop = terminalScreen.scrollHeight;
+    }
+
+    // Creates an inline input box within the terminal and awaits user entry
+    async requestTerminalInput(message) {
+        return new Promise((resolve) => {
+            const terminalScreen = document.getElementById('terminal-screen');
+            const row = document.createElement('div');
+            row.className = 'terminal-line';
+            
+            row.innerHTML = `<span class="terminal-output">${message} </span><input type="text" autocomplete="off" spellcheck="false" style="background:transparent; border:none; border-bottom: 1px dashed #64748b; color:#e2e8f0; font-family:inherit; font-size:inherit; outline:none; width:50%; margin-left: 5px;">`;
+            terminalScreen.appendChild(row);
+            terminalScreen.scrollTop = terminalScreen.scrollHeight;
+
+            const inputField = row.querySelector('input');
+            inputField.focus();
+
+            inputField.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    const val = inputField.value;
+                    inputField.disabled = true;
+                    inputField.style.borderBottom = 'none'; // Make it look like standard text after entry
+                    resolve(val);
+                }
+            });
+        });
+    }
+
+    async evaluateNode(node) {
         switch (node.type) {
             case 'Literal': return node.value;
             case 'Identifier': return this.currentEnv.get(node.name);
             
-            
             case 'ScanExpression': {
-                const message = node.argument ? this.evaluateNode(node.argument) : "Enter input:";
-                const userInput = prompt(message);
+                const message = node.argument ? await this.evaluateNode(node.argument) : "Enter input:";
+                const userInput = await this.requestTerminalInput(message);
                 if (userInput === null) return null;
                 return isNaN(userInput) || userInput.trim() === "" ? userInput : Number(userInput);
             }
 
             case 'BinaryExpression': {
-                const left = this.evaluateNode(node.left);
-                const right = this.evaluateNode(node.right);
+                const left = await this.evaluateNode(node.left);
+                const right = await this.evaluateNode(node.right);
                 switch (node.operator) {
                     case '+': return left + right; case '-': return left - right;
                     case '*': return left * right; case '/': return left / right; case '%': return left % right;
@@ -933,15 +456,20 @@ class RuntimeInterpreter {
                 }
             }
             case 'LogicalExpression': {
-                const left = this.evaluateNode(node.left);
-                if (node.operator === 'OR') { if (left) return true; return Boolean(this.evaluateNode(node.right)); }
-                if (node.operator === 'AND') { if (!left) return false; return Boolean(this.evaluateNode(node.right)); }
+                const left = await this.evaluateNode(node.left);
+                if (node.operator === 'OR') { if (left) return true; return Boolean(await this.evaluateNode(node.right)); }
+                if (node.operator === 'AND') { if (!left) return false; return Boolean(await this.evaluateNode(node.right)); }
                 break;
             }
             case 'CallExpression': {
                 if (!this.functions.has(node.callee)) throw new Error(`Function "${node.callee}" is not defined.`);
                 const func = this.functions.get(node.callee);
-                const evaluatedArgs = node.arguments.map(arg => this.evaluateNode(arg));
+                
+                // Evaluate arguments asynchronously
+                const evaluatedArgs = [];
+                for (let arg of node.arguments) {
+                    evaluatedArgs.push(await this.evaluateNode(arg));
+                }
                 
                 const prevEnv = this.currentEnv;
                 this.currentEnv = new Environment(this.globalEnv);
@@ -951,7 +479,7 @@ class RuntimeInterpreter {
                 });
 
                 let returnValue = null;
-                try { this.executeStatement(func.body); } 
+                try { await this.executeStatement(func.body); } 
                 catch (signal) {
                     if (signal instanceof ReturnSignal) returnValue = signal.value;
                     else throw signal;
@@ -962,42 +490,42 @@ class RuntimeInterpreter {
         }
     }
 
-    executeStatement(node) {
+    async executeStatement(node) {
         this.loopProtectionCounter++;
         if (this.loopProtectionCounter > 15000) throw new Error("🚨 Infinite Loop Protection Triggered! Execution cut-off (> 15,000 steps).");
 
         switch (node.type) {
             case 'BlockStatement':
-                for (let stmt of node.body) this.executeStatement(stmt);
+                for (let stmt of node.body) await this.executeStatement(stmt);
                 break;
             case 'PrintStatement':
-                this.logs.push(String(this.evaluateNode(node.expression)));
+                this.printToTerminal(String(await this.evaluateNode(node.expression)));
                 break;
             case 'VariableDeclaration':
-                this.currentEnv.define(node.id, this.evaluateNode(node.init));
+                this.currentEnv.define(node.id, await this.evaluateNode(node.init));
                 break;
             case 'AssignmentStatement':
-                this.currentEnv.assign(node.id, this.evaluateNode(node.value));
+                this.currentEnv.assign(node.id, await this.evaluateNode(node.value));
                 break;
             case 'ExpressionStatement':
-                this.evaluateNode(node.expression);
+                await this.evaluateNode(node.expression);
                 break;
             case 'FunctionDeclaration':
                 this.functions.set(node.name, node);
                 break;
             case 'ReturnStatement':
-                throw new ReturnSignal(node.argument ? this.evaluateNode(node.argument) : null);
+                throw new ReturnSignal(node.argument ? await this.evaluateNode(node.argument) : null);
             case 'BreakStatement':
                 throw new BreakSignal();
             case 'ContinueStatement':
                 throw new ContinueSignal();
             case 'IfStatement':
-                if (this.evaluateNode(node.condition)) this.executeStatement(node.consequent);
-                else if (node.alternate) this.executeStatement(node.alternate);
+                if (await this.evaluateNode(node.condition)) await this.executeStatement(node.consequent);
+                else if (node.alternate) await this.executeStatement(node.alternate);
                 break;
             case 'WhileStatement':
-                while (this.evaluateNode(node.condition)) {
-                    try { this.executeStatement(node.body); }
+                while (await this.evaluateNode(node.condition)) {
+                    try { await this.executeStatement(node.body); }
                     catch (signal) {
                         if (signal instanceof BreakSignal) break;
                         if (signal instanceof ContinueSignal) continue;
@@ -1006,26 +534,29 @@ class RuntimeInterpreter {
                 }
                 break;
             case 'ForStatement':
-                if (node.init) this.executeStatement(node.init);
-                while (!node.condition || this.evaluateNode(node.condition)) {
-                    try { this.executeStatement(node.body); }
+                if (node.init) await this.executeStatement(node.init);
+                while (!node.condition || await this.evaluateNode(node.condition)) {
+                    try { await this.executeStatement(node.body); }
                     catch (signal) {
                         if (signal instanceof BreakSignal) break;
                         if (signal instanceof ContinueSignal) { /* proceed to update */ }
                         else throw signal;
                     }
-                    if (node.update) this.executeStatement(node.update);
+                    if (node.update) await this.executeStatement(node.update);
                 }
                 break;
         }
     }
 
-    interpret(ast) {
-        for (let stmt of ast.body) this.executeStatement(stmt);
-        return this.logs;
+    async interpret(ast) {
+        for (let stmt of ast.body) {
+            await this.executeStatement(stmt);
+        }
     }
 }
 
+// --- PHASE 5: EDITOR & UI INTEGRATION ---
+// Sets up the Monaco code editor and links the execution engine to the browser UI.
 let monacoEditorInstance;
 
 require(['vs/editor/editor.main'], function () {
@@ -1038,7 +569,7 @@ require(['vs/editor/editor.main'], function () {
         tokenizer: {
             root: [
                 [new RegExp(`\\b(${keywordsToMatch})\\b`), 'keyword'],
-                [/"([^"\n]*)"/, 'string'],
+                [/"([^"\n]*)"/, 'string'], 
                 [ /\/\/.*/, 'comment' ],
                 [/\d+(\.\d+)?/, 'number'],
                 [/[a-zA-Z_][a-zA-Z0-9_]*/, 'identifier'],
@@ -1081,117 +612,25 @@ require(['vs/editor/editor.main'], function () {
 
 window.clearConsole = function() { document.getElementById('terminal-screen').innerHTML = ''; }
 
-let currentInputResolve = null;
-
-window.handleConsoleInput = function(event) {
-    if (event.key === 'Enter') {
-        const input = document.getElementById('console-input-field').value;
-        document.getElementById('console-input-field').value = '';
-        
-        // Display the input in the console
-        const inputRow = document.createElement('div');
-        inputRow.className = 'terminal-line';
-        inputRow.innerHTML = `<span class="terminal-output" style="color: #f59e0b;">${input}</span>`;
-        document.getElementById('terminal-screen').appendChild(inputRow);
-        
-        // Hide input area
-        document.getElementById('console-input-area').style.display = 'none';
-        
-        // Resolve the promise
-        if (currentInputResolve) {
-            currentInputResolve(input);
-            currentInputResolve = null;
-        }
-    }
-}
-
-window.requestConsoleInput = function(prompt) {
-    return new Promise((resolve) => {
-        currentInputResolve = resolve;
-        const inputArea = document.getElementById('console-input-area');
-        const inputField = document.getElementById('console-input-field');
-        const promptSpan = document.getElementById('input-prompt');
-        
-        promptSpan.textContent = prompt ? prompt : 'Input:';
-        inputArea.style.display = 'block';
-        inputField.focus();
-    });
-}
-
+// Updated to run asynchronously so it can wait for terminal inputs
 window.executeSourceCode = async function() {
     const terminalScreen = document.getElementById('terminal-screen');
     const codeInputString = monacoEditorInstance.getValue();
     clearConsole();
 
     try {
-        const compiler = new CompleteCompiler(window.requestConsoleInput);
-        const result = await compiler.compile(codeInputString);
-
-        // Display compilation phases
-        const phasesRow = document.createElement('div');
-        phasesRow.className = 'terminal-line';
-        phasesRow.innerHTML = `<span class="terminal-output" style="color: #8b5cf6; font-weight: bold;">╔════ 6-PHASE COMPILATION REPORT ════╗</span>`;
-        terminalScreen.appendChild(phasesRow);
-
-        result.phases.forEach(phase => {
-            const phaseRow = document.createElement('div');
-            phaseRow.className = 'terminal-line';
-            let info = `Phase ${phase.phase}: ${phase.name}`;
-            if (phase.tokens) info += ` - Tokens: ${phase.tokens.length}+`;
-            if (phase.symbols !== undefined) info += ` - Symbols: ${phase.symbols}`;
-            if (phase.instructions !== undefined) info += ` - Instructions: ${phase.instructions}`;
-            if (phase.bytecodeSize !== undefined) info += ` - Bytecode: ${phase.bytecodeSize}`;
-            
-            phaseRow.innerHTML = `<span class="terminal-output" style="color: #10b981;">${info}</span>`;
-            terminalScreen.appendChild(phaseRow);
-        });
-
-        const endRow = document.createElement('div');
-        endRow.className = 'terminal-line';
-        endRow.innerHTML = `<span class="terminal-output" style="color: #8b5cf6; font-weight: bold;">╚═════════════════════════════════╝</span>`;
-        terminalScreen.appendChild(endRow);
-
-        const outputRow = document.createElement('div');
-        outputRow.className = 'terminal-line';
-        outputRow.innerHTML = `<span class="terminal-output" style="color: #60a5fa; font-style: italic;">--- Program Output ---</span>`;
-        terminalScreen.appendChild(outputRow);
-
-        if (result.success) {
-            if (result.output.length === 0) {
-                terminalScreen.innerHTML += `<div class="terminal-line"><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
-            } else {
-                result.output.forEach(line => {
-                    const row = document.createElement('div');
-                    row.className = 'terminal-line';
-                    row.innerHTML = `<span class="terminal-output" style="white-space: pre-wrap;"></span>`;
-                    row.querySelector('.terminal-output').innerText = line;
-                    terminalScreen.appendChild(row);
-                });
-            }
-        } else {
-            // Split error message to show all errors
-            const errorLines = result.error.split('\n');
-            errorLines.forEach((errorLine, idx) => {
-                const errRow = document.createElement('div');
-                errRow.className = 'terminal-line';
-                if (idx === 0) {
-                    errRow.innerHTML = `<div class="terminal-error" style="font-weight: bold; margin-bottom: 4px;"></div>`;
-                } else {
-                    errRow.innerHTML = `<div class="terminal-error"></div>`;
-                }
-                errRow.querySelector('.terminal-error').innerText = errorLine;
-                terminalScreen.appendChild(errRow);
-            });
-        }
+        const tokens = new Lexer(codeInputString).tokenize();
+        const ast = new Parser(tokens).parse();
         
-        // Hide input area after execution
-        document.getElementById('console-input-area').style.display = 'none';
+        // Interpreting dynamically prints to console as the code runs
+        const interpreter = new RuntimeInterpreter();
+        await interpreter.interpret(ast);
+
     } catch (err) {
         const errRow = document.createElement('div');
         errRow.className = 'terminal-line';
         errRow.innerHTML = `<div class="terminal-error"></div>`;
         errRow.querySelector('.terminal-error').innerText = err.message;
         terminalScreen.appendChild(errRow);
-        document.getElementById('console-input-area').style.display = 'none';
     }
 }
