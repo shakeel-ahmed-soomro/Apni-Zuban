@@ -1,5 +1,6 @@
 // Configure Monaco Editor base path
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
+let errorLog = [];
 
 const CONFIG = {
     langName: "ApniZuban",
@@ -25,13 +26,13 @@ const CONFIG = {
     sampleCode: [
         "iftitah",
         "ye hai naam = poochen(\"Enter your name: \")",
-        "bolen (\"Welcome \" + naam + \"! \n\tYe hai Apni Zuban!\")",
+        "bolen (\"Welcome \" + naam + \"!\\n\\t\\t\\tto Apni Zuban Compiler.\")",
         "ikhtitam"
     ].join("\n")
 };
 
 document.title = `${CONFIG.langName} Ultimate Studio`;
-document.getElementById('app-title').innerHTML = `${CONFIG.langName} <span>Ultimate Core</span>`;
+document.getElementById('app-title').innerHTML = `${CONFIG.langName} <span>Compiler Core</span>`;
 document.getElementById('lang-indicator').innerText = `${CONFIG.langName} Workspace`;
 
 const KEYWORD_MAP = {
@@ -52,8 +53,11 @@ function unescapeString(str) {
     return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 }
 
+// =====================================================================
+// PHASE 1: LEXICAL ANALYSIS
+// =====================================================================
 class Lexer {
-    constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; }
+    constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; this.line = 1; }
     hasMoreTokens() { return this.cursor < this.source.length; }
 
     getNextToken() {
@@ -62,6 +66,9 @@ class Lexer {
 
         const wsOrComment = /^(?:\s+|\/\/[^\n]*)+/.exec(remaining);
         if (wsOrComment) {
+            // Count newlines in the matched whitespace
+            const newlines = (wsOrComment[0].match(/\n/g) || []).length;
+            this.line += newlines;
             this.cursor += wsOrComment[0].length;
             return this.getNextToken();
         }
@@ -71,7 +78,7 @@ class Lexer {
                 const nextChar = remaining[keywordString.length];
                 if (!nextChar || !/[a-zA-Z0-9_]/.test(nextChar)) {
                     this.cursor += keywordString.length;
-                    return { type: tokenType, value: keywordString };
+                    return { type: tokenType, value: keywordString, line: this.line };
                 }
             }
         }
@@ -80,6 +87,8 @@ class Lexer {
         if (remaining.startsWith('!=')) { this.cursor += 2; return { type: 'COMP_OP', value: '!=' }; }
         if (remaining.startsWith('<=')) { this.cursor += 2; return { type: 'COMP_OP', value: '<=' }; }
         if (remaining.startsWith('>=')) { this.cursor += 2; return { type: 'COMP_OP', value: '>=' }; }
+        if (remaining.startsWith('&&')) { this.cursor += 2; return { type: 'AND', value: '&&' }; }
+        if (remaining.startsWith('||')) { this.cursor += 2; return { type: 'OR', value: '||' }; }
 
         const singleCharTokens = [
             { str: '<', type: 'COMP_OP' }, { str: '>', type: 'COMP_OP' },
@@ -116,7 +125,8 @@ class Lexer {
             return { type: 'IDENTIFIER', value: identifier[0] };
         }
 
-        throw new SyntaxError(`Lexical Analyzer Error near: "${remaining.slice(0, 15)}..."`);
+        errorLog.push(`Lexical Error: Unexpected token near "${remaining.slice(0, 15)}..."`);
+        return null; // Stop lexing
     }
 
     tokenize() {
@@ -129,6 +139,9 @@ class Lexer {
     }
 }
 
+// =====================================================================
+// PHASE 2: SYNTAX ANALYSIS
+// =====================================================================
 class Parser {
     constructor(tokens) { this.tokens = tokens; this.cursor = 0; }
     lookahead() { return this.tokens[this.cursor] || null; }
@@ -136,8 +149,14 @@ class Parser {
     
     eat(type) {
         const token = this.lookahead();
-        if (!token) throw new SyntaxError(`Parser Error: Expected [${type}], reached end of file.`);
-        if (token.type !== type) throw new SyntaxError(`Parser Error: Expected [${type}], found "${token.value}"`);
+        if (!token || token.type !== type) {
+            const line = token ? token.line : "EOF";
+            errorLog.push(`Line ${line}: Expected [${type}], found "${token ? token.value : 'End of file'}"`);
+            
+            // Panic: skip the current token and force continue
+            this.cursor++; 
+            return null;
+        }
         this.cursor++;
         return token;
     }
@@ -145,8 +164,11 @@ class Parser {
     parse() {
         this.eat('START');
         const programRoot = { type: 'Program', body: [] };
+        
         while (this.cursor < this.tokens.length && !this.match('END')) {
-            programRoot.body.push(this.parseStatement());
+            const stmt = this.parseStatement();
+            if (stmt) programRoot.body.push(stmt);
+            else this.cursor++; // Skip broken statements
         }
         this.eat('END');
         return programRoot;
@@ -168,8 +190,7 @@ class Parser {
             case 'LBRACE': return this.parseBlockStatement();
             case 'IDENTIFIER':
                 if (this.tokens[this.cursor + 1] && this.tokens[this.cursor + 1].type === 'LPAREN') {
-                    const callExpr = this.parseCallExpression();
-                    return { type: 'ExpressionStatement', expression: callExpr };
+                    return { type: 'ExpressionStatement', expression: this.parseCallExpression() };
                 }
                 return this.parseAssignmentStatement();
             default: throw new SyntaxError(`Parser Error: Invalid statement start: "${token.value}"`);
@@ -337,7 +358,6 @@ class Parser {
         if (token.type === 'TRUE') { this.eat('TRUE'); return { type: 'Literal', value: true }; }
         if (token.type === 'FALSE') { this.eat('FALSE'); return { type: 'Literal', value: false }; }
         
-        // Scan with optional prompt: poochen("prompt")
         if (token.type === 'SCAN') { 
             this.eat('SCAN'); 
             let promptNode = null;
@@ -359,175 +379,189 @@ class Parser {
     }
 }
 
-class Environment {
-    constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
-    define(name, value) { this.vars.set(name, value); }
-    assign(name, value) {
-        if (this.vars.has(name)) { this.vars.set(name, value); return; }
-        if (this.parent) { this.parent.assign(name, value); return; }
-        throw new ReferenceError(`Undefined variable pointer: "${name}"`);
-    }
-    get(name) {
-        if (this.vars.has(name)) return this.vars.get(name);
-        if (this.parent) return this.parent.get(name);
-        throw new ReferenceError(`Undefined variable pointer: "${name}"`);
-    }
-}
+// =====================================================================
+// PHASE 3: SEMANTIC ANALYSIS (Scope & Variable Checking)
+// =====================================================================
+class SemanticAnalyzer {
+    constructor() { this.scopes = [new Set()]; }
+    enterScope() { this.scopes.push(new Set()); }
+    exitScope() { this.scopes.pop(); }
+    declare(name) { this.scopes[this.scopes.length - 1].add(name); }
+    isDeclared(name) { return this.scopes.some(scope => scope.has(name)); }
 
-class ReturnSignal extends Error { constructor(value) { super(); this.value = value; } }
-class BreakSignal extends Error {}
-class ContinueSignal extends Error {}
-
-class RuntimeInterpreter {
-    constructor() {
-        this.globalEnv = new Environment();
-        this.currentEnv = this.globalEnv;
-        this.logs = [];
-        this.functions = new Map();
-        this.loopProtectionCounter = 0;
-    }
-
-    async waitForUserInput(promptText = "") {
-        const terminal = document.getElementById('terminal-screen');
-        
-        const inputContainer = document.createElement('div');
-        inputContainer.className = 'terminal-line';
-        
-        // Display prompt if provided, otherwise default
-        const promptLabel = promptText ? `<span class="terminal-prompt" style="color: #8b5cf6;">${promptText}</span>` : `<span class="terminal-prompt">></span>`;
-        
-        inputContainer.innerHTML = `${promptLabel}<input type="text" id="runtime-input" autofocus style="background:transparent; color:white; border:none; outline:none; font-family:inherit; margin-left: 5px;">`;
-        terminal.appendChild(inputContainer);
-        
-        return new Promise((resolve) => {
-            const inputField = document.getElementById('runtime-input');
-            inputField.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    const val = inputField.value;
-                    inputContainer.remove(); 
-                    resolve(val);
-                }
-            });
-        });
-    }
-
-    async evaluateNode(node) {
-        switch (node.type) {
-            case 'Literal': return node.value;
-            case 'Identifier': return this.currentEnv.get(node.name);
-            case 'ScanExpression': 
-                let promptText = "";
-                if (node.prompt) promptText = await this.evaluateNode(node.prompt);
-                return await this.waitForUserInput(promptText); 
-            case 'BinaryExpression': {
-                const left = await this.evaluateNode(node.left);
-                const right = await this.evaluateNode(node.right);
-                switch (node.operator) {
-                    case '+': return left + right; case '-': return left - right;
-                    case '*': return left * right; case '/': return left / right; case '%': return left % right;
-                    case '==': return left == right; case '!=': return left != right;
-                    case '<': return left < right; case '>': return left > right;
-                    case '<=': return left <= right; case '>=': return left >= right;
-                    default: throw new Error(`Unknown Math/Comp Operator: ${node.operator}`);
-                }
-            }
-            case 'LogicalExpression': {
-                const left = await this.evaluateNode(node.left);
-                if (node.operator === 'OR') { if (left) return true; return Boolean(await this.evaluateNode(node.right)); }
-                if (node.operator === 'AND') { if (!left) return false; return Boolean(await this.evaluateNode(node.right)); }
-                break;
-            }
-            case 'CallExpression': {
-                if (!this.functions.has(node.callee)) throw new Error(`Function "${node.callee}" is not defined.`);
-                const func = this.functions.get(node.callee);
-                const evaluatedArgs = [];
-                for(let arg of node.arguments) evaluatedArgs.push(await this.evaluateNode(arg));
-                
-                const prevEnv = this.currentEnv;
-                this.currentEnv = new Environment(this.globalEnv);
-                
-                func.params.forEach((paramName, idx) => {
-                    this.currentEnv.define(paramName, evaluatedArgs[idx] !== undefined ? evaluatedArgs[idx] : null);
-                });
-
-                let returnValue = null;
-                try { await this.executeStatement(func.body); } 
-                catch (signal) {
-                    if (signal instanceof ReturnSignal) returnValue = signal.value;
-                    else throw signal;
-                } finally { this.currentEnv = prevEnv; }
-                return returnValue;
-            }
-            default: throw new Error(`Unknown Expression Node: ${node.type}`);
-        }
-    }
-
-    async executeStatement(node) {
-        this.loopProtectionCounter++;
-        if (this.loopProtectionCounter > 15000) throw new Error("🚨 Infinite Loop Protection Triggered! Execution cut-off (> 15,000 steps).");
-
-        switch (node.type) {
+    analyze(node) {
+        if (!node) return;
+        switch(node.type) {
+            case 'Program':
             case 'BlockStatement':
-                for (let stmt of node.body) await this.executeStatement(stmt);
-                break;
-            case 'PrintStatement':
-                this.logs.push(String(await this.evaluateNode(node.expression)));
+                this.enterScope();
+                node.body.forEach(stmt => this.analyze(stmt));
+                this.exitScope();
                 break;
             case 'VariableDeclaration':
-                this.currentEnv.define(node.id, await this.evaluateNode(node.init));
+                this.analyze(node.init);
+                this.declare(node.id);
                 break;
             case 'AssignmentStatement':
-                this.currentEnv.assign(node.id, await this.evaluateNode(node.value));
+                this.analyze(node.value);
+                if (!this.isDeclared(node.id)) throw new Error(`Semantic Error: Variable '${node.id}' used before declaration.`);
                 break;
-            case 'ExpressionStatement':
-                await this.evaluateNode(node.expression);
+            case 'Identifier':
+                if (!this.isDeclared(node.name)) throw new Error(`Semantic Error: Variable '${node.name}' used before declaration.`);
                 break;
-            case 'FunctionDeclaration':
-                this.functions.set(node.name, node);
-                break;
-            case 'ReturnStatement':
-                throw new ReturnSignal(node.argument ? await this.evaluateNode(node.argument) : null);
-            case 'BreakStatement':
-                throw new BreakSignal();
-            case 'ContinueStatement':
-                throw new ContinueStatement();
             case 'IfStatement':
-                if (await this.evaluateNode(node.condition)) await this.executeStatement(node.consequent);
-                else if (node.alternate) await this.executeStatement(node.alternate);
+                this.analyze(node.condition); this.analyze(node.consequent);
+                if (node.alternate) this.analyze(node.alternate);
                 break;
             case 'WhileStatement':
-                while (await this.evaluateNode(node.condition)) {
-                    try { await this.executeStatement(node.body); }
-                    catch (signal) {
-                        if (signal instanceof BreakSignal) break;
-                        if (signal instanceof ContinueSignal) continue;
-                        throw signal;
-                    }
-                }
+                this.analyze(node.condition); this.analyze(node.body);
                 break;
             case 'ForStatement':
-                if (node.init) await this.executeStatement(node.init);
-                while (!node.condition || await this.evaluateNode(node.condition)) {
-                    try { await this.executeStatement(node.body); }
-                    catch (signal) {
-                        if (signal instanceof BreakSignal) break;
-                        if (signal instanceof ContinueSignal) { /* proceed to update */ }
-                        else throw signal;
-                    }
-                    if (node.update) await this.executeStatement(node.update);
-                }
+                this.enterScope();
+                if (node.init) this.analyze(node.init);
+                if (node.condition) this.analyze(node.condition);
+                if (node.update) this.analyze(node.update);
+                this.analyze(node.body);
+                this.exitScope();
+                break;
+            case 'FunctionDeclaration':
+                this.declare(node.name);
+                this.enterScope();
+                node.params.forEach(p => this.declare(p));
+                this.analyze(node.body);
+                this.exitScope();
+                break;
+            case 'BinaryExpression':
+            case 'LogicalExpression':
+                this.analyze(node.left); this.analyze(node.right);
+                break;
+            case 'PrintStatement':
+            case 'ReturnStatement':
+            case 'ExpressionStatement':
+                this.analyze(node.expression || node.argument);
                 break;
         }
     }
+}
 
-    async interpret(ast) {
-        for (let stmt of ast.body) await this.executeStatement(stmt);
-        return this.logs;
+// =====================================================================
+// PHASE 4: INTERMEDIATE CODE GENERATION (TAC/IR)
+// =====================================================================
+class IntermediateCodeGenerator {
+    constructor() { this.tempCount = 0; this.ir = []; }
+    newTemp() { return `t${this.tempCount++}`; }
+    
+    generate(node) { this.walk(node); return this.ir; }
+    
+    walk(node) {
+        if (!node) return '';
+        switch(node.type) {
+            case 'Literal': return JSON.stringify(node.value);
+            case 'Identifier': return node.name;
+            case 'BinaryExpression':
+                const left = this.walk(node.left);
+                const right = this.walk(node.right);
+                const t = this.newTemp();
+                this.ir.push(`${t} = ${left} ${node.operator} ${right}`);
+                return t;
+            case 'VariableDeclaration':
+                const init = this.walk(node.init);
+                this.ir.push(`${node.id} = ${init}`);
+                return node.id;
+            case 'AssignmentStatement':
+                const val = this.walk(node.value);
+                this.ir.push(`${node.id} = ${val}`);
+                return node.id;
+            case 'PrintStatement':
+                const expr = this.walk(node.expression);
+                this.ir.push(`PRINT ${expr}`);
+                break;
+            case 'Program':
+            case 'BlockStatement':
+                node.body.forEach(s => this.walk(s));
+                break;
+        }
     }
 }
 
-let monacoEditorInstance;
+// =====================================================================
+// PHASE 5: CODE OPTIMIZATION (AST Constant Folding)
+// =====================================================================
+class Optimizer {
+    optimize(node) {
+        if (!node) return node;
+        switch (node.type) {
+            case 'Program':
+            case 'BlockStatement':
+                node.body = node.body.map(s => this.optimize(s));
+                return node;
+            case 'BinaryExpression':
+                node.left = this.optimize(node.left);
+                node.right = this.optimize(node.right);
+                // Constant Folding (e.g., compile 2 + 3 into 5 before runtime)
+                if (node.left.type === 'Literal' && node.right.type === 'Literal' && typeof node.left.value === 'number' && typeof node.right.value === 'number') {
+                    try {
+                        const val = eval(`${node.left.value} ${node.operator} ${node.right.value}`);
+                        return { type: 'Literal', value: val };
+                    } catch(e) {}
+                }
+                return node;
+            case 'VariableDeclaration': node.init = this.optimize(node.init); return node;
+            case 'AssignmentStatement': node.value = this.optimize(node.value); return node;
+            case 'PrintStatement': node.expression = this.optimize(node.expression); return node;
+            case 'IfStatement':
+                node.condition = this.optimize(node.condition);
+                node.consequent = this.optimize(node.consequent);
+                if (node.alternate) node.alternate = this.optimize(node.alternate);
+                return node;
+            case 'WhileStatement':
+                node.condition = this.optimize(node.condition);
+                node.body = this.optimize(node.body);
+                return node;
+        }
+        return node;
+    }
+}
 
+// =====================================================================
+// PHASE 6: TARGET CODE GENERATION (Compiled Output to JS)
+// =====================================================================
+class CodeGenerator {
+    generate(node) {
+        if (!node) return '';
+        switch(node.type) {
+            case 'Program': return node.body.map(s => this.generate(s)).join('\n');
+            case 'BlockStatement': return `{\n${node.body.map(s => this.generate(s)).join('\n')}\n}`;
+            case 'VariableDeclaration': return `let ${node.id} = ${this.generate(node.init)};`;
+            case 'AssignmentStatement': return `${node.id} = ${this.generate(node.value)};`;
+            case 'PrintStatement': return `__env.print(${this.generate(node.expression)});`;
+            case 'ScanExpression': return `(await __env.scan(${node.prompt ? this.generate(node.prompt) : '""'}))`;
+            case 'Literal': 
+                // This ensures "Welcome \n" becomes a valid JS string "Welcome \n"
+                if (typeof node.value === 'string') {
+                    return JSON.stringify(node.value);
+                }
+                return node.value;
+            case 'Identifier': return node.name;
+            case 'BinaryExpression': return `(${this.generate(node.left)} + ${this.generate(node.right)})`;
+            case 'LogicalExpression':
+                let op = node.operator === 'AND' ? '&&' : '||';
+                return `(${this.generate(node.left)} ${op} ${this.generate(node.right)})`;
+            case 'IfStatement': return `if (${this.generate(node.condition)}) ${this.generate(node.consequent)} ${node.alternate ? `else ${this.generate(node.alternate)}` : ''}`;
+            case 'WhileStatement': return `while (${this.generate(node.condition)}) ${this.generate(node.body)}`;
+            case 'ForStatement': return `for (${node.init ? this.generate(node.init) : ''} ${node.condition ? this.generate(node.condition) : ''}; ${node.update ? this.generate(node.update).replace(';','') : ''}) ${this.generate(node.body)}`;
+            case 'FunctionDeclaration': return `async function ${node.name}(${node.params.join(', ')}) ${this.generate(node.body)}`;
+            case 'ReturnStatement': return `return ${node.argument ? this.generate(node.argument) : ''};`;
+            case 'CallExpression': return `(await ${node.callee}(${node.arguments.map(a => this.generate(a)).join(', ')}))`;
+            case 'ExpressionStatement': return `${this.generate(node.expression)};`;
+            case 'BreakStatement': return 'break;';
+            case 'ContinueStatement': return 'continue;';
+        }
+    }
+}
+
+// Monaco Editor Initialization
+let monacoEditorInstance;
 require(['vs/editor/editor.main'], function () {
     monaco.languages.register({ id: 'ultimateFlowLanguage' });
 
@@ -581,32 +615,95 @@ require(['vs/editor/editor.main'], function () {
 
 window.clearConsole = function() { document.getElementById('terminal-screen').innerHTML = ''; }
 
+function printToTerminal(text, type = "normal") {
+    const screen = document.getElementById('terminal-screen');
+    const row = document.createElement('div');
+    row.className = 'terminal-line';
+    
+    let colorClass = "";
+    if (type === "info") colorClass = "color: #3b82f6;";
+    if (type === "success") colorClass = "color: #10b981;";
+    if (type === "error") colorClass = "color: #ef4444; font-weight: bold;";
+    
+    row.innerHTML = `<span class="terminal-output" style="${colorClass}">${text}</span>`;
+    screen.appendChild(row);
+    screen.scrollTop = screen.scrollHeight;
+}
+
+// =====================================================================
+// COMPILER PIPELINE & EXECUTION
+// =====================================================================
 window.executeSourceCode = async function() {
-    const terminalScreen = document.getElementById('terminal-screen');
     const codeInputString = monacoEditorInstance.getValue();
     clearConsole();
+    
+    // Reset error log for this new run
+    errorLog = [];
 
     try {
-        const tokens = new Lexer(codeInputString).tokenize();
-        const ast = new Parser(tokens).parse();
-        const runtimeLogs = await new RuntimeInterpreter().interpret(ast);
+        // We pass the errorLog array to the pipeline
+        const lexer = new Lexer(codeInputString);
+        const tokens = lexer.tokenize(); 
 
-        if (runtimeLogs.length === 0) {
-            terminalScreen.innerHTML = `<div class="terminal-line"><span class="terminal-prompt">></span><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
-        } else {
-            runtimeLogs.forEach(line => {
-                const row = document.createElement('div');
-                row.className = 'terminal-line';
-                row.innerHTML = `<span class="terminal-output"></span>`;
-                row.querySelector('.terminal-output').innerText = line;
-                terminalScreen.appendChild(row);
-            });
+        const parser = new Parser(tokens);
+        const ast = parser.parse();
+        
+        const analyzer = new SemanticAnalyzer();
+        analyzer.analyze(ast);
+        
+        // If we found any errors during analysis, show them and stop
+        if (errorLog.length > 0) {
+            errorLog.forEach(err => printToTerminal(err, 'error'));
+            return;
         }
-    } catch (err) {
-        const errRow = document.createElement('div');
-        errRow.className = 'terminal-line';
-        errRow.innerHTML = `<div class="terminal-error"></div>`;
-        errRow.querySelector('.terminal-error').innerText = err.message;
-        terminalScreen.appendChild(errRow);
+
+        const optimizer = new Optimizer();
+        const optimizedAst = optimizer.optimize(ast);
+        
+        const generator = new CodeGenerator();
+        const compiledJS = generator.generate(optimizedAst);
+
+        // Terminal-based Input System
+        const __env = {
+            print: (text) => {
+                const formatted = String(text).replace(/\n/g, '<br>').replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;');
+                printToTerminal(formatted);
+            },
+            
+            // REPLACE YOUR OLD SCAN FUNCTION WITH THIS ONE:
+            scan: async (promptText) => {
+                // 1. Create a span to hold both the prompt text and the input field
+                const lineContainer = document.createElement('div');
+                const promptElement = document.createElement('span');
+                promptElement.innerText = promptText;
+                lineContainer.appendChild(promptElement);
+                
+                // 2. Create the input field and add it right next to the text
+                const inputField = document.createElement('input');
+                inputField.style.cssText = "background:transparent; color:white; border:none; outline:none; font-family:monospace; margin-left: 5px;";
+                lineContainer.appendChild(inputField);
+                
+                // 3. Add to terminal and focus
+                document.getElementById('terminal-screen').appendChild(lineContainer);
+                inputField.focus();
+                
+                return new Promise((resolve) => {
+                    inputField.onkeydown = (e) => {
+                        if (e.key === 'Enter') {
+                            const val = inputField.value;
+                            inputField.disabled = true; // Lock the input after Enter
+                            resolve(val);
+                        }
+                    };
+                });
+            }
+        };
+
+        const execute = new Function('__env', `return (async () => { \n${compiledJS}\n })();`);
+        await execute(__env);
+        printToTerminal('\n[Program Finished]', 'success');
+
+    } catch (error) {
+        printToTerminal(`❌ System Error: ${error.message}`, 'error');
     }
 }

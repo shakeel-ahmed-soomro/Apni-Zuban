@@ -28,14 +28,14 @@ header {
     font-size: 18px; 
     font-weight: 700; 
     letter-spacing: -0.5px; 
-    color: #ffffff; 
+    color: #8b5cf6; 
     display: flex; 
     align-items: center; 
     gap: 8px; 
 }
 
 .logo-section h1 span { 
-    color: #8b5cf6; 
+    color: #fff461; 
     background: rgba(139, 92, 246, 0.1); 
     padding: 2px 8px; 
     border-radius: 4px; 

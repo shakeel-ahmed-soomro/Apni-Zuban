@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Custom Language Playground</title>
+    <title>Apni Zuban Ultimate Compiler Studio</title>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,12 +17,12 @@
 
     <header>
         <div class="logo-section">
-            <h1 id="app-title">LangEngine <span>Ultimate Core</span></h1>
+            <h1 id="app-title">LangEngine <span>Compiler Core</span></h1>
         </div>
         <div class="controls">
             <button class="btn-run" onclick="executeSourceCode()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                Compile & Run
+                Compile & Execute
             </button>
         </div>
     </header>
@@ -31,24 +31,24 @@
         <div class="pane pane-left">
             <div class="pane-header">
                 <div>Source Code</div>
-                <div id="lang-indicator" style="color: #8b5cf6;">Ultimate Sandbox</div>
+                <div id="lang-indicator" style="color: #8b5cf6;">Compiler Workspace</div>
             </div>
             <div id="editor-container"></div>
         </div>
 
         <div class="pane">
             <div class="pane-header">
-                <div>Console Terminal Output</div>
+                <div>Compiler Diagnostics & Output</div>
                 <div style="cursor:pointer; color:#ef4444;" onclick="clearConsole()">Clear Console</div>
             </div>
             <div id="terminal-screen" class="terminal-container">
-                <div class="terminal-line terminal-welcome">/* Engine loaded: Functions, For-Loops, Scope, Arrays, Logic & Breaks activated. */</div>
+                <div class="terminal-line terminal-welcome">/* Compiler Engine loaded. All 6 AST pipeline phases active. */</div>
             </div>
         </div>
     </div>
 
     <div class="config-hint">
-        <div>💡 <strong>Ultimate Mode:</strong> Functions, parameters, scope, return, break/continue, AND/OR logic are fully implemented. Check <span class="config-tag">CONFIG</span> in app.js to change keywords!</div>
+        <div>💡 <strong>Compiler Mode:</strong> Converts "Apni Zuban" to TAC, optimizes via Constant Folding, and compiles directly to Javascript byte-code.</div>
     </div>
 
     <script src="app.js"></script>
