@@ -49,7 +49,12 @@ const KEYWORD_MAP = {
 const KEYWORD_ENTRIES = Object.entries(KEYWORD_MAP).sort((a, b) => b[0].length - a[0].length);
 
 class Lexer {
-    constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; }
+    constructor(sourceCode) { 
+        this.source = sourceCode; 
+        this.cursor = 0;
+        this.line = 1;
+        this.column = 1;
+    }
     hasMoreTokens() { return this.cursor < this.source.length; }
 
     getNextToken() {
@@ -58,24 +63,37 @@ class Lexer {
 
         const wsOrComment = /^(?:\s+|\/\/[^\n]*)+/.exec(remaining);
         if (wsOrComment) {
-            this.cursor += wsOrComment[0].length;
+            const matched = wsOrComment[0];
+            for (let char of matched) {
+                if (char === '\n') {
+                    this.line++;
+                    this.column = 1;
+                } else {
+                    this.column++;
+                }
+            }
+            this.cursor += matched.length;
             return this.getNextToken();
         }
+
+        const startLine = this.line;
+        const startColumn = this.column;
 
         for (let [keywordString, tokenType] of KEYWORD_ENTRIES) {
             if (remaining.startsWith(keywordString)) {
                 const nextChar = remaining[keywordString.length];
                 if (!nextChar || !/[a-zA-Z0-9_]/.test(nextChar)) {
                     this.cursor += keywordString.length;
-                    return { type: tokenType, value: keywordString };
+                    this.column += keywordString.length;
+                    return { type: tokenType, value: keywordString, line: startLine, column: startColumn };
                 }
             }
         }
 
-        if (remaining.startsWith('==')) { this.cursor += 2; return { type: 'COMP_OP', value: '==' }; }
-        if (remaining.startsWith('!=')) { this.cursor += 2; return { type: 'COMP_OP', value: '!=' }; }
-        if (remaining.startsWith('<=')) { this.cursor += 2; return { type: 'COMP_OP', value: '<=' }; }
-        if (remaining.startsWith('>=')) { this.cursor += 2; return { type: 'COMP_OP', value: '>=' }; }
+        if (remaining.startsWith('==')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '==', line: startLine, column: startColumn }; }
+        if (remaining.startsWith('!=')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '!=', line: startLine, column: startColumn }; }
+        if (remaining.startsWith('<=')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '<=', line: startLine, column: startColumn }; }
+        if (remaining.startsWith('>=')) { this.cursor += 2; this.column += 2; return { type: 'COMP_OP', value: '>=', line: startLine, column: startColumn }; }
 
         const singleCharTokens = [
             { str: '<', type: 'COMP_OP' }, { str: '>', type: 'COMP_OP' },
@@ -90,35 +108,39 @@ class Lexer {
         for (let tc of singleCharTokens) {
             if (remaining.startsWith(tc.str)) {
                 this.cursor += tc.str.length;
-                return { type: tc.type, value: tc.str };
+                this.column += tc.str.length;
+                return { type: tc.type, value: tc.str, line: startLine, column: startColumn };
             }
         }
 
         const numeric = /^\d+(\.\d+)?/.exec(remaining);
         if (numeric) {
             this.cursor += numeric[0].length;
-            return { type: 'NUMBER', value: Number(numeric[0]) };
+            this.column += numeric[0].length;
+            return { type: 'NUMBER', value: Number(numeric[0]), line: startLine, column: startColumn };
         }
 
         
         const stringMatch = /^"((?:[^"\\]|\\.)*)"/.exec(remaining);
         if (stringMatch) {
             this.cursor += stringMatch[0].length;
+            this.column += stringMatch[0].length;
             let processedValue = stringMatch[1]
                 .replace(/\\n/g, '\n')
                 .replace(/\\t/g, '\t')
                 .replace(/\\"/g, '"')
                 .replace(/\\\\/g, '\\');
-            return { type: 'STRING', value: processedValue };
+            return { type: 'STRING', value: processedValue, line: startLine, column: startColumn };
         }
 
         const identifier = /^[a-zA-Z_][a-zA-Z0-9_]*/.exec(remaining);
         if (identifier) {
             this.cursor += identifier[0].length;
-            return { type: 'IDENTIFIER', value: identifier[0] };
+            this.column += identifier[0].length;
+            return { type: 'IDENTIFIER', value: identifier[0], line: startLine, column: startColumn };
         }
 
-        throw new SyntaxError(`Lexical Analyzer Error near: "${remaining.slice(0, 15)}..."`);
+        throw new SyntaxError(`Lexical Analyzer Error near: "${remaining.slice(0, 15)}..." at line ${startLine}`);
     }
 
     tokenize() {
@@ -189,41 +211,46 @@ class Parser {
     }
 
     parsePrintStatement() {
+        const startToken = this.lookahead();
         this.eat('PRINT');
-        return { type: 'PrintStatement', expression: this.parseExpression() };
+        return { type: 'PrintStatement', expression: this.parseExpression(), line: startToken.line };
     }
 
     parseVariableDeclaration() {
+        const startToken = this.lookahead();
         this.eat('VAR_DEC');
         const idToken = this.eat('IDENTIFIER');
         this.eat('ASSIGN');
-        return { type: 'VariableDeclaration', id: idToken.value, init: this.parseExpression() };
+        return { type: 'VariableDeclaration', id: idToken.value, init: this.parseExpression(), line: startToken.line };
     }
 
     parseAssignmentStatement() {
         const idToken = this.eat('IDENTIFIER');
         this.eat('ASSIGN');
-        return { type: 'AssignmentStatement', id: idToken.value, value: this.parseExpression() };
+        return { type: 'AssignmentStatement', id: idToken.value, value: this.parseExpression(), line: idToken.line };
     }
 
     parseIfStatement() {
+        const startToken = this.lookahead();
         this.eat('IF'); this.eat('LPAREN');
         const condition = this.parseExpression();
         this.eat('RPAREN');
         const consequent = this.parseStatement();
         let alternate = null;
         if (this.match('ELSE')) { this.eat('ELSE'); alternate = this.parseStatement(); }
-        return { type: 'IfStatement', condition, consequent, alternate };
+        return { type: 'IfStatement', condition, consequent, alternate, line: startToken.line };
     }
 
     parseWhileStatement() {
+        const startToken = this.lookahead();
         this.eat('WHILE'); this.eat('LPAREN');
         const condition = this.parseExpression();
         this.eat('RPAREN');
-        return { type: 'WhileStatement', condition, body: this.parseStatement() };
+        return { type: 'WhileStatement', condition, body: this.parseStatement(), line: startToken.line };
     }
 
     parseForStatement() {
+        const startToken = this.lookahead();
         this.eat('FOR'); this.eat('LPAREN');
         let init = null;
         if (!this.match('SEMI')) {
@@ -237,10 +264,11 @@ class Parser {
         let update = null;
         if (!this.match('RPAREN')) update = this.parseAssignmentStatement();
         this.eat('RPAREN');
-        return { type: 'ForStatement', init, condition, update, body: this.parseStatement() };
+        return { type: 'ForStatement', init, condition, update, body: this.parseStatement(), line: startToken.line };
     }
 
     parseFunctionDeclaration() {
+        const startToken = this.lookahead();
         this.eat('FUNC');
         const nameToken = this.eat('IDENTIFIER');
         this.eat('LPAREN');
@@ -250,18 +278,19 @@ class Parser {
             while (this.match('COMMA')) { this.eat('COMMA'); params.push(this.eat('IDENTIFIER').value); }
         }
         this.eat('RPAREN');
-        return { type: 'FunctionDeclaration', name: nameToken.value, params, body: this.parseBlockStatement() };
+        return { type: 'FunctionDeclaration', name: nameToken.value, params, body: this.parseBlockStatement(), line: startToken.line };
     }
 
     parseReturnStatement() {
+        const startToken = this.lookahead();
         this.eat('RETURN');
         let argument = null;
         if (!this.match('RBRACE') && !this.match('END') && !this.match('SEMI')) argument = this.parseExpression();
-        return { type: 'ReturnStatement', argument };
+        return { type: 'ReturnStatement', argument, line: startToken.line };
     }
 
-    parseBreakStatement() { this.eat('BREAK'); return { type: 'BreakStatement' }; }
-    parseContinueStatement() { this.eat('CONTINUE'); return { type: 'ContinueStatement' }; }
+    parseBreakStatement() { const startToken = this.lookahead(); this.eat('BREAK'); return { type: 'BreakStatement', line: startToken.line }; }
+    parseContinueStatement() { const startToken = this.lookahead(); this.eat('CONTINUE'); return { type: 'ContinueStatement', line: startToken.line }; }
 
     parseExpression() { return this.parseLogicalOrExpression(); }
 
@@ -420,11 +449,10 @@ class SemanticAnalyzer {
     }
 
     analyze(ast) {
-        try {
-            this.visitProgram(ast);
-            if (this.errors.length > 0) throw new Error(`Semantic Errors:\n${this.errors.join('\n')}`);
-        } catch (err) {
-            throw new Error(`Semantic Analysis Failed: ${err.message}`);
+        this.visitProgram(ast);
+        if (this.errors.length > 0) {
+            const errorMessage = `Semantic Errors Found (${this.errors.length}):\n${this.errors.map((err, idx) => `${idx + 1}. ${err}`).join('\n')}`;
+            throw new Error(errorMessage);
         }
         return { ast, symbolTable: this.globalSymbolTable, nodeSymbolMap: this.nodeSymbolMap };
     }
@@ -437,14 +465,18 @@ class SemanticAnalyzer {
         switch (node.type) {
             case 'VariableDeclaration':
                 if (this.currentSymbolTable.symbols.has(node.id)) {
-                    this.errors.push(`Variable "${node.id}" redeclared in same scope.`);
+                    this.errors.push(`[Line ${node.line}] Variable "${node.id}" redeclared in same scope.`);
                 } else {
                     this.currentSymbolTable.define(node.id, 'dynamic', 'variable');
                 }
                 if (node.init) this.visitExpression(node.init);
                 break;
             case 'FunctionDeclaration':
-                this.currentSymbolTable.define(node.name, 'function', 'function');
+                if (this.currentSymbolTable.symbols.has(node.name)) {
+                    this.errors.push(`[Line ${node.line}] Function "${node.name}" redeclared in same scope.`);
+                } else {
+                    this.currentSymbolTable.define(node.name, 'function', 'function');
+                }
                 const funcScope = this.currentSymbolTable.createChildScope();
                 funcScope.scope = `function:${node.name}`;
                 const prevTable = this.currentSymbolTable;
@@ -468,10 +500,10 @@ class SemanticAnalyzer {
                 break;
             case 'AssignmentStatement':
                 if (!this.currentSymbolTable.exists(node.id)) {
-                    this.errors.push(`Undefined variable: "${node.id}"`);
+                    this.errors.push(`[Line ${node.line}] Undefined variable: "${node.id}"`);
                 } else {
                     const sym = this.currentSymbolTable.lookup(node.id);
-                    if (sym.kind === 'function') this.errors.push(`Cannot assign to function: "${node.id}"`);
+                    if (sym.kind === 'function') this.errors.push(`[Line ${node.line}] Cannot assign to function: "${node.id}"`);
                 }
                 this.visitExpression(node.value);
                 break;
@@ -508,7 +540,7 @@ class SemanticAnalyzer {
         switch (node.type) {
             case 'Identifier':
                 if (!this.currentSymbolTable.exists(node.name)) {
-                    this.errors.push(`Undefined variable: "${node.name}"`);
+                    this.errors.push(`[Line ${node.line || '?'}] Undefined variable: "${node.name}"`);
                 }
                 break;
             case 'BinaryExpression':
@@ -521,7 +553,7 @@ class SemanticAnalyzer {
                 break;
             case 'CallExpression':
                 if (!this.currentSymbolTable.exists(node.callee)) {
-                    this.errors.push(`Undefined function: "${node.callee}"`);
+                    this.errors.push(`[Line ${node.line || '?'}] Undefined function: "${node.callee}"`);
                 }
                 for (let arg of node.arguments) this.visitExpression(arg);
                 break;
@@ -1137,11 +1169,19 @@ window.executeSourceCode = async function() {
                 });
             }
         } else {
-            const errRow = document.createElement('div');
-            errRow.className = 'terminal-line';
-            errRow.innerHTML = `<div class="terminal-error"></div>`;
-            errRow.querySelector('.terminal-error').innerText = result.error;
-            terminalScreen.appendChild(errRow);
+            // Split error message to show all errors
+            const errorLines = result.error.split('\n');
+            errorLines.forEach((errorLine, idx) => {
+                const errRow = document.createElement('div');
+                errRow.className = 'terminal-line';
+                if (idx === 0) {
+                    errRow.innerHTML = `<div class="terminal-error" style="font-weight: bold; margin-bottom: 4px;"></div>`;
+                } else {
+                    errRow.innerHTML = `<div class="terminal-error"></div>`;
+                }
+                errRow.querySelector('.terminal-error').innerText = errorLine;
+                terminalScreen.appendChild(errRow);
+            });
         }
         
         // Hide input area after execution
