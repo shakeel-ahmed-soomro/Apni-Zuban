@@ -1,118 +1,594 @@
-// --- INITIALIZATION ---
+// Configure Monaco Editor base path
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
 
-// --- CONFIGURATION ---
 const CONFIG = {
+    langName: "ApniZuban",
     keywords: {
-        start: "iftitah", end: "ikhtitam", print: "bolen", 
-        variable: "ye hai", scanKeyword: "poochen",
-        ifKeyword: "agar", elseKeyword: "warna",
-        whileKeyword: "jab tak", forKeyword: "jab bhi",
-        funcKeyword: "tareeqa", returnKeyword: "wapas den",
-        trueKeyword: "sahi", falseKeyword: "ghalat"
-    }
+        start: "iftitah",
+        end: "ikhtitam",
+        print: "bolen",
+        scan: "pooche", 
+        variable: "ye hai",
+        ifKeyword: "agar",
+        elseKeyword: "warna",
+        whileKeyword: "jab tak",
+        forKeyword: "jab bhi",
+        funcKeyword: "tareeqa",
+        returnKeyword: "wapas den",
+        breakKeyword: "ruk jayen",
+        continueKeyword: "aage barhen",
+        trueKeyword: "sahi",
+        falseKeyword: "ghalat",
+        andKeyword: "aur",
+        orKeyword: "ya"
+    },
+    sampleCode: [
+        "iftitah",
+        "ye hai name = pooche",
+        "bolen \"Hello \" + name",
+        "ikhtitam"
+    ].join("\n")
 };
 
-// --- INTERPRETER CORE ---
+document.title = `${CONFIG.langName} Ultimate Studio`;
+document.getElementById('app-title').innerHTML = `${CONFIG.langName} <span>Ultimate Core</span>`;
+document.getElementById('lang-indicator').innerText = `${CONFIG.langName} Workspace`;
+
+const KEYWORD_MAP = {
+    [CONFIG.keywords.start]: 'START', [CONFIG.keywords.end]: 'END',
+    [CONFIG.keywords.print]: 'PRINT', [CONFIG.keywords.scan]: 'SCAN',
+    [CONFIG.keywords.variable]: 'VAR_DEC', [CONFIG.keywords.ifKeyword]: 'IF',
+    [CONFIG.keywords.elseKeyword]: 'ELSE', [CONFIG.keywords.whileKeyword]: 'WHILE',
+    [CONFIG.keywords.forKeyword]: 'FOR', [CONFIG.keywords.funcKeyword]: 'FUNC',
+    [CONFIG.keywords.returnKeyword]: 'RETURN', [CONFIG.keywords.breakKeyword]: 'BREAK',
+    [CONFIG.keywords.continueKeyword]: 'CONTINUE', [CONFIG.keywords.trueKeyword]: 'TRUE',
+    [CONFIG.keywords.falseKeyword]: 'FALSE', [CONFIG.keywords.andKeyword]: 'AND',
+    [CONFIG.keywords.orKeyword]: 'OR'
+};
+
+const KEYWORD_ENTRIES = Object.entries(KEYWORD_MAP).sort((a, b) => b[0].length - a[0].length);
+
+function unescapeString(str) {
+    return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+}
+
+class Lexer {
+    constructor(sourceCode) { this.source = sourceCode; this.cursor = 0; }
+    hasMoreTokens() { return this.cursor < this.source.length; }
+
+    getNextToken() {
+        if (!this.hasMoreTokens()) return null;
+        const remaining = this.source.slice(this.cursor);
+
+        const wsOrComment = /^(?:\s+|\/\/[^\n]*)+/.exec(remaining);
+        if (wsOrComment) {
+            this.cursor += wsOrComment[0].length;
+            return this.getNextToken();
+        }
+
+        for (let [keywordString, tokenType] of KEYWORD_ENTRIES) {
+            if (remaining.startsWith(keywordString)) {
+                const nextChar = remaining[keywordString.length];
+                if (!nextChar || !/[a-zA-Z0-9_]/.test(nextChar)) {
+                    this.cursor += keywordString.length;
+                    return { type: tokenType, value: keywordString };
+                }
+            }
+        }
+
+        if (remaining.startsWith('==')) { this.cursor += 2; return { type: 'COMP_OP', value: '==' }; }
+        if (remaining.startsWith('!=')) { this.cursor += 2; return { type: 'COMP_OP', value: '!=' }; }
+        if (remaining.startsWith('<=')) { this.cursor += 2; return { type: 'COMP_OP', value: '<=' }; }
+        if (remaining.startsWith('>=')) { this.cursor += 2; return { type: 'COMP_OP', value: '>=' }; }
+
+        const singleCharTokens = [
+            { str: '<', type: 'COMP_OP' }, { str: '>', type: 'COMP_OP' },
+            { str: '=', type: 'ASSIGN' }, { str: '+', type: 'MATH_OP' },
+            { str: '-', type: 'MATH_OP' }, { str: '*', type: 'MATH_OP' },
+            { str: '/', type: 'MATH_OP' }, { str: '%', type: 'MATH_OP' },
+            { str: '{', type: 'LBRACE' }, { str: '}', type: 'RBRACE' },
+            { str: '(', type: 'LPAREN' }, { str: ')', type: 'RPAREN' },
+            { str: ';', type: 'SEMI' }, { str: ',', type: 'COMMA' }
+        ];
+
+        for (let tc of singleCharTokens) {
+            if (remaining.startsWith(tc.str)) {
+                this.cursor += tc.str.length;
+                return { type: tc.type, value: tc.str };
+            }
+        }
+
+        const numeric = /^\d+(\.\d+)?/.exec(remaining);
+        if (numeric) {
+            this.cursor += numeric[0].length;
+            return { type: 'NUMBER', value: Number(numeric[0]) };
+        }
+
+        const stringMatch = /^"((?:[^"\\]|\\.)*)"/.exec(remaining);
+        if (stringMatch) {
+            this.cursor += stringMatch[0].length;
+            return { type: 'STRING', value: unescapeString(stringMatch[1]) };
+        }
+
+        const identifier = /^[a-zA-Z_][a-zA-Z0-9_]*/.exec(remaining);
+        if (identifier) {
+            this.cursor += identifier[0].length;
+            return { type: 'IDENTIFIER', value: identifier[0] };
+        }
+
+        throw new SyntaxError(`Lexical Analyzer Error near: "${remaining.slice(0, 15)}..."`);
+    }
+
+    tokenize() {
+        const tokens = [];
+        while (this.hasMoreTokens()) {
+            const token = this.getNextToken();
+            if (token) tokens.push(token);
+        }
+        return tokens;
+    }
+}
+
+class Parser {
+    constructor(tokens) { this.tokens = tokens; this.cursor = 0; }
+    lookahead() { return this.tokens[this.cursor] || null; }
+    match(type) { return this.lookahead() && this.lookahead().type === type; }
+    
+    eat(type) {
+        const token = this.lookahead();
+        if (!token) throw new SyntaxError(`Parser Error: Expected [${type}], reached end of file.`);
+        if (token.type !== type) throw new SyntaxError(`Parser Error: Expected [${type}], found "${token.value}"`);
+        this.cursor++;
+        return token;
+    }
+
+    parse() {
+        this.eat('START');
+        const programRoot = { type: 'Program', body: [] };
+        while (this.cursor < this.tokens.length && !this.match('END')) {
+            programRoot.body.push(this.parseStatement());
+        }
+        this.eat('END');
+        return programRoot;
+    }
+
+    parseStatement() {
+        const token = this.lookahead();
+        if (!token) throw new SyntaxError("Parser Error: Statement expected.");
+        switch (token.type) {
+            case 'PRINT': return this.parsePrintStatement();
+            case 'VAR_DEC': return this.parseVariableDeclaration();
+            case 'IF': return this.parseIfStatement();
+            case 'WHILE': return this.parseWhileStatement();
+            case 'FOR': return this.parseForStatement();
+            case 'FUNC': return this.parseFunctionDeclaration();
+            case 'RETURN': return this.parseReturnStatement();
+            case 'BREAK': return this.parseBreakStatement();
+            case 'CONTINUE': return this.parseContinueStatement();
+            case 'LBRACE': return this.parseBlockStatement();
+            case 'IDENTIFIER':
+                if (this.tokens[this.cursor + 1] && this.tokens[this.cursor + 1].type === 'LPAREN') {
+                    const callExpr = this.parseCallExpression();
+                    return { type: 'ExpressionStatement', expression: callExpr };
+                }
+                return this.parseAssignmentStatement();
+            default: throw new SyntaxError(`Parser Error: Invalid statement start: "${token.value}"`);
+        }
+    }
+
+    parseBlockStatement() {
+        this.eat('LBRACE');
+        const body = [];
+        while (this.lookahead() && !this.match('RBRACE')) body.push(this.parseStatement());
+        this.eat('RBRACE');
+        return { type: 'BlockStatement', body };
+    }
+
+    parsePrintStatement() {
+        this.eat('PRINT');
+        return { type: 'PrintStatement', expression: this.parseExpression() };
+    }
+
+    parseVariableDeclaration() {
+        this.eat('VAR_DEC');
+        const idToken = this.eat('IDENTIFIER');
+        this.eat('ASSIGN');
+        return { type: 'VariableDeclaration', id: idToken.value, init: this.parseExpression() };
+    }
+
+    parseAssignmentStatement() {
+        const idToken = this.eat('IDENTIFIER');
+        this.eat('ASSIGN');
+        return { type: 'AssignmentStatement', id: idToken.value, value: this.parseExpression() };
+    }
+
+    parseIfStatement() {
+        this.eat('IF'); this.eat('LPAREN');
+        const condition = this.parseExpression();
+        this.eat('RPAREN');
+        const consequent = this.parseStatement();
+        let alternate = null;
+        if (this.match('ELSE')) { this.eat('ELSE'); alternate = this.parseStatement(); }
+        return { type: 'IfStatement', condition, consequent, alternate };
+    }
+
+    parseWhileStatement() {
+        this.eat('WHILE'); this.eat('LPAREN');
+        const condition = this.parseExpression();
+        this.eat('RPAREN');
+        return { type: 'WhileStatement', condition, body: this.parseStatement() };
+    }
+
+    parseForStatement() {
+        this.eat('FOR'); this.eat('LPAREN');
+        let init = null;
+        if (!this.match('SEMI')) {
+            if (this.match('VAR_DEC')) init = this.parseVariableDeclaration();
+            else init = this.parseAssignmentStatement();
+        }
+        this.eat('SEMI');
+        let condition = null;
+        if (!this.match('SEMI')) condition = this.parseExpression();
+        this.eat('SEMI');
+        let update = null;
+        if (!this.match('RPAREN')) update = this.parseAssignmentStatement();
+        this.eat('RPAREN');
+        return { type: 'ForStatement', init, condition, update, body: this.parseStatement() };
+    }
+
+    parseFunctionDeclaration() {
+        this.eat('FUNC');
+        const nameToken = this.eat('IDENTIFIER');
+        this.eat('LPAREN');
+        const params = [];
+        if (!this.match('RPAREN')) {
+            params.push(this.eat('IDENTIFIER').value);
+            while (this.match('COMMA')) { this.eat('COMMA'); params.push(this.eat('IDENTIFIER').value); }
+        }
+        this.eat('RPAREN');
+        return { type: 'FunctionDeclaration', name: nameToken.value, params, body: this.parseBlockStatement() };
+    }
+
+    parseReturnStatement() {
+        this.eat('RETURN');
+        let argument = null;
+        if (!this.match('RBRACE') && !this.match('END') && !this.match('SEMI')) argument = this.parseExpression();
+        return { type: 'ReturnStatement', argument };
+    }
+
+    parseBreakStatement() { this.eat('BREAK'); return { type: 'BreakStatement' }; }
+    parseContinueStatement() { this.eat('CONTINUE'); return { type: 'ContinueStatement' }; }
+
+    parseExpression() { return this.parseLogicalOrExpression(); }
+
+    parseLogicalOrExpression() {
+        let left = this.parseLogicalAndExpression();
+        while (this.match('OR')) {
+            this.eat('OR');
+            left = { type: 'LogicalExpression', operator: 'OR', left, right: this.parseLogicalAndExpression() };
+        }
+        return left;
+    }
+
+    parseLogicalAndExpression() {
+        let left = this.parseComparisonExpression();
+        while (this.match('AND')) {
+            this.eat('AND');
+            left = { type: 'LogicalExpression', operator: 'AND', left, right: this.parseComparisonExpression() };
+        }
+        return left;
+    }
+
+    parseComparisonExpression() {
+        let left = this.parseAdditiveExpression();
+        while (this.match('COMP_OP')) {
+            const op = this.eat('COMP_OP').value;
+            left = { type: 'BinaryExpression', operator: op, left, right: this.parseAdditiveExpression() };
+        }
+        return left;
+    }
+
+    parseAdditiveExpression() {
+        let left = this.parseMultiplicativeExpression();
+        while (this.match('MATH_OP') && (this.lookahead().value === '+' || this.lookahead().value === '-')) {
+            const op = this.eat('MATH_OP').value;
+            left = { type: 'BinaryExpression', operator: op, left, right: this.parseMultiplicativeExpression() };
+        }
+        return left;
+    }
+
+    parseMultiplicativeExpression() {
+        let left = this.parsePrimaryOrCall();
+        while (this.match('MATH_OP') && (this.lookahead().value === '*' || this.lookahead().value === '/' || this.lookahead().value === '%')) {
+            const op = this.eat('MATH_OP').value;
+            left = { type: 'BinaryExpression', operator: op, left, right: this.parsePrimaryOrCall() };
+        }
+        return left;
+    }
+
+    parsePrimaryOrCall() {
+        const token = this.lookahead();
+        if (token && token.type === 'IDENTIFIER') {
+            const nextToken = this.tokens[this.cursor + 1];
+            if (nextToken && nextToken.type === 'LPAREN') return this.parseCallExpression();
+            this.eat('IDENTIFIER');
+            return { type: 'Identifier', name: token.value };
+        }
+        return this.parsePrimaryExpression();
+    }
+
+    parseCallExpression() {
+        const nameToken = this.eat('IDENTIFIER');
+        this.eat('LPAREN');
+        const args = [];
+        if (!this.match('RPAREN')) {
+            args.push(this.parseExpression());
+            while (this.match('COMMA')) { this.eat('COMMA'); args.push(this.parseExpression()); }
+        }
+        this.eat('RPAREN');
+        return { type: 'CallExpression', callee: nameToken.value, arguments: args };
+    }
+
+    parsePrimaryExpression() {
+        const token = this.lookahead();
+        if (!token) throw new SyntaxError("Parser Error: Value expected.");
+
+        if (token.type === 'NUMBER' || token.type === 'STRING') { this.eat(token.type); return { type: 'Literal', value: token.value }; }
+        if (token.type === 'TRUE') { this.eat('TRUE'); return { type: 'Literal', value: true }; }
+        if (token.type === 'FALSE') { this.eat('FALSE'); return { type: 'Literal', value: false }; }
+        if (token.type === 'SCAN') { this.eat('SCAN'); return { type: 'ScanExpression' }; } 
+        if (token.type === 'LPAREN') {
+            this.eat('LPAREN');
+            const expr = this.parseExpression();
+            this.eat('RPAREN');
+            return expr;
+        }
+        throw new SyntaxError(`Parser Error: Unexpected token "${token.value}"`);
+    }
+}
+
+class Environment {
+    constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
+    define(name, value) { this.vars.set(name, value); }
+    assign(name, value) {
+        if (this.vars.has(name)) { this.vars.set(name, value); return; }
+        if (this.parent) { this.parent.assign(name, value); return; }
+        throw new ReferenceError(`Undefined variable pointer: "${name}"`);
+    }
+    get(name) {
+        if (this.vars.has(name)) return this.vars.get(name);
+        if (this.parent) return this.parent.get(name);
+        throw new ReferenceError(`Undefined variable pointer: "${name}"`);
+    }
+}
+
+class ReturnSignal extends Error { constructor(value) { super(); this.value = value; } }
+class BreakSignal extends Error {}
+class ContinueSignal extends Error {}
+
 class RuntimeInterpreter {
     constructor() {
-        this.globalEnv = new Map();
+        this.globalEnv = new Environment();
+        this.currentEnv = this.globalEnv;
+        this.logs = [];
         this.functions = new Map();
+        this.loopProtectionCounter = 0;
     }
 
-    print(text) {
-        const term = document.getElementById('terminal-screen');
-        const div = document.createElement('div');
-        div.className = 'terminal-line';
-        div.innerText = text;
-        term.appendChild(div);
-        term.scrollTop = term.scrollHeight;
-    }
-
-    async prompt(message) {
+    // Helper: Async input mechanism
+    async waitForUserInput() {
+        const terminal = document.getElementById('terminal-screen');
+        const inputContainer = document.createElement('div');
+        inputContainer.className = 'terminal-line';
+        inputContainer.innerHTML = `<span class="terminal-prompt">?</span><input type="text" id="runtime-input" autofocus style="background:transparent; color:white; border:none; outline:none; font-family:inherit;">`;
+        terminal.appendChild(inputContainer);
+        
         return new Promise((resolve) => {
-            const term = document.getElementById('terminal-screen');
-            const row = document.createElement('div');
-            row.innerHTML = `<span style="color: #64748b;">${message} </span><input type="text" id="active-input" style="background:transparent; border:none; border-bottom:1px solid #64748b; color:white; outline:none;">`;
-            term.appendChild(row);
-            const input = row.querySelector('#active-input');
-            input.focus();
-            input.addEventListener('keydown', (e) => {
+            const inputField = document.getElementById('runtime-input');
+            inputField.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
-                    const val = input.value;
-                    input.disabled = true;
+                    const val = inputField.value;
+                    inputContainer.remove(); // Remove input after get
                     resolve(val);
                 }
             });
         });
     }
 
-    async execute(ast) {
-        for (let node of ast.body) {
-            if (node.type === 'PrintStatement') {
-                const val = await this.evaluate(node.expression);
-                this.print(val);
+    async evaluateNode(node) {
+        switch (node.type) {
+            case 'Literal': return node.value;
+            case 'Identifier': return this.currentEnv.get(node.name);
+            case 'ScanExpression': return await this.waitForUserInput(); 
+            case 'BinaryExpression': {
+                const left = await this.evaluateNode(node.left);
+                const right = await this.evaluateNode(node.right);
+                switch (node.operator) {
+                    case '+': return left + right; case '-': return left - right;
+                    case '*': return left * right; case '/': return left / right; case '%': return left % right;
+                    case '==': return left == right; case '!=': return left != right;
+                    case '<': return left < right; case '>': return left > right;
+                    case '<=': return left <= right; case '>=': return left >= right;
+                    default: throw new Error(`Unknown Math/Comp Operator: ${node.operator}`);
+                }
             }
-            if (node.type === 'VariableDeclaration') {
-                this.globalEnv.set(node.id, await this.evaluate(node.init));
+            case 'LogicalExpression': {
+                const left = await this.evaluateNode(node.left);
+                if (node.operator === 'OR') { if (left) return true; return Boolean(await this.evaluateNode(node.right)); }
+                if (node.operator === 'AND') { if (!left) return false; return Boolean(await this.evaluateNode(node.right)); }
+                break;
             }
+            case 'CallExpression': {
+                if (!this.functions.has(node.callee)) throw new Error(`Function "${node.callee}" is not defined.`);
+                const func = this.functions.get(node.callee);
+                const evaluatedArgs = [];
+                for(let arg of node.arguments) evaluatedArgs.push(await this.evaluateNode(arg));
+                
+                const prevEnv = this.currentEnv;
+                this.currentEnv = new Environment(this.globalEnv);
+                
+                func.params.forEach((paramName, idx) => {
+                    this.currentEnv.define(paramName, evaluatedArgs[idx] !== undefined ? evaluatedArgs[idx] : null);
+                });
+
+                let returnValue = null;
+                try { await this.executeStatement(func.body); } 
+                catch (signal) {
+                    if (signal instanceof ReturnSignal) returnValue = signal.value;
+                    else throw signal;
+                } finally { this.currentEnv = prevEnv; }
+                return returnValue;
+            }
+            default: throw new Error(`Unknown Expression Node: ${node.type}`);
         }
     }
 
-    async evaluate(node) {
-        if (node.type === 'Literal') return node.value;
-        if (node.type === 'Identifier') return this.globalEnv.get(node.name);
-        if (node.type === 'ScanExpression') {
-            const msg = node.argument ? await this.evaluate(node.argument) : "Input:";
-            return await this.prompt(msg);
+    async executeStatement(node) {
+        this.loopProtectionCounter++;
+        if (this.loopProtectionCounter > 15000) throw new Error("🚨 Infinite Loop Protection Triggered! Execution cut-off (> 15,000 steps).");
+
+        switch (node.type) {
+            case 'BlockStatement':
+                for (let stmt of node.body) await this.executeStatement(stmt);
+                break;
+            case 'PrintStatement':
+                this.logs.push(String(await this.evaluateNode(node.expression)));
+                break;
+            case 'VariableDeclaration':
+                this.currentEnv.define(node.id, await this.evaluateNode(node.init));
+                break;
+            case 'AssignmentStatement':
+                this.currentEnv.assign(node.id, await this.evaluateNode(node.value));
+                break;
+            case 'ExpressionStatement':
+                await this.evaluateNode(node.expression);
+                break;
+            case 'FunctionDeclaration':
+                this.functions.set(node.name, node);
+                break;
+            case 'ReturnStatement':
+                throw new ReturnSignal(node.argument ? await this.evaluateNode(node.argument) : null);
+            case 'BreakStatement':
+                throw new BreakSignal();
+            case 'ContinueStatement':
+                throw new ContinueSignal();
+            case 'IfStatement':
+                if (await this.evaluateNode(node.condition)) await this.executeStatement(node.consequent);
+                else if (node.alternate) await this.executeStatement(node.alternate);
+                break;
+            case 'WhileStatement':
+                while (await this.evaluateNode(node.condition)) {
+                    try { await this.executeStatement(node.body); }
+                    catch (signal) {
+                        if (signal instanceof BreakSignal) break;
+                        if (signal instanceof ContinueSignal) continue;
+                        throw signal;
+                    }
+                }
+                break;
+            case 'ForStatement':
+                if (node.init) await this.executeStatement(node.init);
+                while (!node.condition || await this.evaluateNode(node.condition)) {
+                    try { await this.executeStatement(node.body); }
+                    catch (signal) {
+                        if (signal instanceof BreakSignal) break;
+                        if (signal instanceof ContinueSignal) { /* proceed to update */ }
+                        else throw signal;
+                    }
+                    if (node.update) await this.executeStatement(node.update);
+                }
+                break;
         }
-        if (node.type === 'BinaryExpression') {
-            const left = await this.evaluate(node.left);
-            const right = await this.evaluate(node.right);
-            return left + right; // Simple concatenation/addition
-        }
+    }
+
+    async interpret(ast) {
+        for (let stmt of ast.body) await this.executeStatement(stmt);
+        return this.logs;
     }
 }
 
-// --- MONACO EDITOR SETUP ---
-let editor;
+let monacoEditorInstance;
+
 require(['vs/editor/editor.main'], function () {
-    // 1. Define Language Rules carefully
-    monaco.languages.register({ id: 'apniZuban' });
-    monaco.languages.setMonarchTokensProvider('apniZuban', {
+    monaco.languages.register({ id: 'ultimateFlowLanguage' });
+
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const keywordsToMatch = Object.values(CONFIG.keywords).map(escapeRegex).join('|');
+
+    monaco.languages.setMonarchTokensProvider('ultimateFlowLanguage', {
         tokenizer: {
             root: [
-                [/\b(iftitah|ikhtitam|bolen|ye hai|poochen)\b/, "keyword"],
-                [/"([^"\n]*)"/, "string"],
-                [/[0-9]+/, "number"]
+                [new RegExp(`\\b(${keywordsToMatch})\\b`), 'keyword'],
+                [/"((?:[^"\\]|\\.)*)"/, 'string'],
+                [ /\/\/.*/, 'comment' ],
+                [/\d+(\.\d+)?/, 'number'],
+                [/[a-zA-Z_][a-zA-Z0-9_]*/, 'identifier'],
+                [/[{}()]/, 'delimiter'],
+                [/[<>=+\-*\/%!]+/, 'operator'],
             ]
         }
     });
 
-    // 2. Initialize Editor
-    editor = monaco.editor.create(document.getElementById('editor-container'), {
-        value: 'iftitah\nye hai naam = poochen("Apka naam:")\nbolen "Hello " + naam\nikhtitam',
-        language: 'apniZuban',
-        theme: 'vs-dark'
+    monaco.editor.defineTheme('ultimateDarkTheme', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [
+            { token: 'keyword', foreground: '8b5cf6', fontStyle: 'bold' },
+            { token: 'string', foreground: '10b981' },
+            { token: 'number', foreground: 'f59e0b' },
+            { token: 'comment', foreground: '64748b', fontStyle: 'italic' },
+            { token: 'operator', foreground: 'f43f5e' },
+            { token: 'identifier', foreground: 'e2e8f0' }
+        ],
+        colors: {
+            'editor.background': '#14171f',
+            'editor.lineHighlightBackground': '#1e2330',
+            'editorLineNumber.foreground': '#475569',
+            'editorLineNumber.activeForeground': '#94a3b8'
+        }
+    });
+
+    monacoEditorInstance = monaco.editor.create(document.getElementById('editor-container'), {
+        value: CONFIG.sampleCode,
+        language: 'ultimateFlowLanguage',
+        theme: 'ultimateDarkTheme',
+        fontSize: 14,
+        fontFamily: "'Fira Code', monospace",
+        automaticLayout: true,
+        minimap: { enabled: false },
+        padding: { top: 16 }
     });
 });
 
-// --- EXECUTION TRIGGER ---
+window.clearConsole = function() { document.getElementById('terminal-screen').innerHTML = ''; }
+
+// Changed to async function
 window.executeSourceCode = async function() {
-    if (!editor) {
-        alert("Editor still loading...");
-        return;
-    }
-    document.getElementById('terminal-screen').innerHTML = ''; // Clear
-    const code = editor.getValue();
+    const terminalScreen = document.getElementById('terminal-screen');
+    const codeInputString = monacoEditorInstance.getValue();
+    clearConsole();
+
     try {
-        // You would place your Lexer/Parser logic here
-        const interpreter = new RuntimeInterpreter();
-        // Assuming your parser returns an AST
-        const ast = new Parser(new Lexer(code).tokenize()).parse(); 
-        await interpreter.execute(ast);
+        const tokens = new Lexer(codeInputString).tokenize();
+        const ast = new Parser(tokens).parse();
+        const runtimeLogs = await new RuntimeInterpreter().interpret(ast);
+
+        if (runtimeLogs.length === 0) {
+            terminalScreen.innerHTML = `<div class="terminal-line"><span class="terminal-prompt">></span><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
+        } else {
+            runtimeLogs.forEach(line => {
+                const row = document.createElement('div');
+                row.className = 'terminal-line';
+                row.innerHTML = `<span class="terminal-output"></span>`;
+                row.querySelector('.terminal-output').innerText = line;
+                terminalScreen.appendChild(row);
+            });
+        }
     } catch (err) {
-        console.error(err);
-        alert("Error: " + err.message);
+        const errRow = document.createElement('div');
+        errRow.className = 'terminal-line';
+        errRow.innerHTML = `<div class="terminal-error"></div>`;
+        errRow.querySelector('.terminal-error').innerText = err.message;
+        terminalScreen.appendChild(errRow);
     }
 }
