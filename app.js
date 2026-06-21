@@ -381,6 +381,491 @@ class ReturnSignal extends Error { constructor(value) { super(); this.value = va
 class BreakSignal extends Error {}
 class ContinueSignal extends Error {}
 
+// ============================================================
+// PHASE 3: SEMANTIC ANALYZER
+// ============================================================
+class SymbolTable {
+    constructor(parent = null) {
+        this.symbols = new Map();
+        this.parent = parent;
+        this.scope = 'global';
+    }
+
+    define(name, type, kind = 'variable') {
+        if (this.symbols.has(name)) throw new Error(`Semantic Error: Symbol "${name}" already defined in current scope.`);
+        this.symbols.set(name, { type, kind, defined: true });
+    }
+
+    lookup(name) {
+        if (this.symbols.has(name)) return this.symbols.get(name);
+        if (this.parent) return this.parent.lookup(name);
+        return null;
+    }
+
+    exists(name) {
+        return this.lookup(name) !== null;
+    }
+
+    createChildScope() {
+        return new SymbolTable(this);
+    }
+}
+
+class SemanticAnalyzer {
+    constructor() {
+        this.globalSymbolTable = new SymbolTable();
+        this.currentSymbolTable = this.globalSymbolTable;
+        this.errors = [];
+        this.nodeSymbolMap = new Map();
+    }
+
+    analyze(ast) {
+        try {
+            this.visitProgram(ast);
+            if (this.errors.length > 0) throw new Error(`Semantic Errors:\n${this.errors.join('\n')}`);
+        } catch (err) {
+            throw new Error(`Semantic Analysis Failed: ${err.message}`);
+        }
+        return { ast, symbolTable: this.globalSymbolTable, nodeSymbolMap: this.nodeSymbolMap };
+    }
+
+    visitProgram(node) {
+        for (let stmt of node.body) this.visitStatement(stmt);
+    }
+
+    visitStatement(node) {
+        switch (node.type) {
+            case 'VariableDeclaration':
+                if (this.currentSymbolTable.symbols.has(node.id)) {
+                    this.errors.push(`Variable "${node.id}" redeclared in same scope.`);
+                } else {
+                    this.currentSymbolTable.define(node.id, 'dynamic', 'variable');
+                }
+                if (node.init) this.visitExpression(node.init);
+                break;
+            case 'FunctionDeclaration':
+                this.currentSymbolTable.define(node.name, 'function', 'function');
+                const funcScope = this.currentSymbolTable.createChildScope();
+                funcScope.scope = `function:${node.name}`;
+                const prevTable = this.currentSymbolTable;
+                this.currentSymbolTable = funcScope;
+                for (let param of node.params) {
+                    this.currentSymbolTable.define(param, 'dynamic', 'parameter');
+                }
+                this.visitStatement(node.body);
+                this.currentSymbolTable = prevTable;
+                break;
+            case 'BlockStatement':
+                const blockScope = this.currentSymbolTable.createChildScope();
+                blockScope.scope = 'block';
+                const prevTable2 = this.currentSymbolTable;
+                this.currentSymbolTable = blockScope;
+                for (let stmt of node.body) this.visitStatement(stmt);
+                this.currentSymbolTable = prevTable2;
+                break;
+            case 'PrintStatement':
+                this.visitExpression(node.expression);
+                break;
+            case 'AssignmentStatement':
+                if (!this.currentSymbolTable.exists(node.id)) {
+                    this.errors.push(`Undefined variable: "${node.id}"`);
+                } else {
+                    const sym = this.currentSymbolTable.lookup(node.id);
+                    if (sym.kind === 'function') this.errors.push(`Cannot assign to function: "${node.id}"`);
+                }
+                this.visitExpression(node.value);
+                break;
+            case 'IfStatement':
+                this.visitExpression(node.condition);
+                this.visitStatement(node.consequent);
+                if (node.alternate) this.visitStatement(node.alternate);
+                break;
+            case 'WhileStatement':
+                this.visitExpression(node.condition);
+                this.visitStatement(node.body);
+                break;
+            case 'ForStatement':
+                const forScope = this.currentSymbolTable.createChildScope();
+                forScope.scope = 'for-loop';
+                const prevTable3 = this.currentSymbolTable;
+                this.currentSymbolTable = forScope;
+                if (node.init) this.visitStatement(node.init);
+                if (node.condition) this.visitExpression(node.condition);
+                if (node.update) this.visitStatement(node.update);
+                this.visitStatement(node.body);
+                this.currentSymbolTable = prevTable3;
+                break;
+            case 'ExpressionStatement':
+                this.visitExpression(node.expression);
+                break;
+            case 'ReturnStatement':
+                if (node.argument) this.visitExpression(node.argument);
+                break;
+        }
+    }
+
+    visitExpression(node) {
+        switch (node.type) {
+            case 'Identifier':
+                if (!this.currentSymbolTable.exists(node.name)) {
+                    this.errors.push(`Undefined variable: "${node.name}"`);
+                }
+                break;
+            case 'BinaryExpression':
+                this.visitExpression(node.left);
+                this.visitExpression(node.right);
+                break;
+            case 'LogicalExpression':
+                this.visitExpression(node.left);
+                this.visitExpression(node.right);
+                break;
+            case 'CallExpression':
+                if (!this.currentSymbolTable.exists(node.callee)) {
+                    this.errors.push(`Undefined function: "${node.callee}"`);
+                }
+                for (let arg of node.arguments) this.visitExpression(arg);
+                break;
+            case 'ScanExpression':
+                if (node.argument) this.visitExpression(node.argument);
+                break;
+        }
+    }
+}
+
+// ============================================================
+// PHASE 4: INTERMEDIATE CODE GENERATOR (3-Address Code)
+// ============================================================
+class IntermediateCodeGenerator {
+    constructor() {
+        this.code = [];
+        this.tempCounter = 0;
+        this.labelCounter = 0;
+    }
+
+    generate(ast) {
+        this.visitProgram(ast);
+        return this.code;
+    }
+
+    newTemp() {
+        return `$t${this.tempCounter++}`;
+    }
+
+    newLabel() {
+        return `L${this.labelCounter++}`;
+    }
+
+    emit(op, arg1 = null, arg2 = null, result = null, operator = null) {
+        const instr = { op, arg1, arg2, result, index: this.code.length };
+        if (operator) instr.operator = operator;
+        this.code.push(instr);
+    }
+
+    visitProgram(node) {
+        for (let stmt of node.body) this.visitStatement(stmt);
+    }
+
+    visitStatement(node) {
+        switch (node.type) {
+            case 'VariableDeclaration':
+                if (node.init) {
+                    const temp = this.visitExpression(node.init);
+                    this.emit('ASSIGN', temp, null, node.id);
+                }
+                break;
+            case 'PrintStatement':
+                const val = this.visitExpression(node.expression);
+                this.emit('PRINT', val);
+                break;
+            case 'AssignmentStatement':
+                const exprVal = this.visitExpression(node.value);
+                this.emit('ASSIGN', exprVal, null, node.id);
+                break;
+            case 'FunctionDeclaration':
+                const startLabel = this.newLabel();
+                const endLabel = this.newLabel();
+                this.emit('FUNC_DECL', node.name, node.params.length, startLabel);
+                this.visitStatement(node.body);
+                this.emit('FUNC_END', node.name);
+                break;
+            case 'BlockStatement':
+                for (let stmt of node.body) this.visitStatement(stmt);
+                break;
+            case 'IfStatement':
+                const falseLabel = this.newLabel();
+                const endLabel2 = this.newLabel();
+                const condition = this.visitExpression(node.condition);
+                this.emit('JF', condition, falseLabel);
+                this.visitStatement(node.consequent);
+                this.emit('JMP', endLabel2);
+                this.code.push({ label: falseLabel });
+                if (node.alternate) this.visitStatement(node.alternate);
+                this.code.push({ label: endLabel2 });
+                break;
+            case 'WhileStatement':
+                const loopLabel = this.newLabel();
+                const exitLabel = this.newLabel();
+                this.code.push({ label: loopLabel });
+                const whileCond = this.visitExpression(node.condition);
+                this.emit('JF', whileCond, exitLabel);
+                this.visitStatement(node.body);
+                this.emit('JMP', loopLabel);
+                this.code.push({ label: exitLabel });
+                break;
+            case 'ExpressionStatement':
+                this.visitExpression(node.expression);
+                break;
+        }
+    }
+
+    visitExpression(node) {
+        switch (node.type) {
+            case 'Literal':
+                return node.value;
+            case 'Identifier':
+                return node.name;
+            case 'BinaryExpression':
+                const left = this.visitExpression(node.left);
+                const right = this.visitExpression(node.right);
+                const temp = this.newTemp();
+                this.emit('BINOP', left, right, temp, node.operator);
+                return temp;
+            case 'LogicalExpression':
+                const leftLog = this.visitExpression(node.left);
+                const rightLog = this.visitExpression(node.right);
+                const tempLog = this.newTemp();
+                this.emit('LOGOP', leftLog, rightLog, tempLog, node.operator);
+                return tempLog;
+            case 'CallExpression':
+                const args = node.arguments.map(arg => this.visitExpression(arg));
+                const callTemp = this.newTemp();
+                this.emit('CALL', node.callee, args.length, callTemp);
+                args.forEach((arg, idx) => this.emit('PUSH_ARG', arg, idx));
+                return callTemp;
+            case 'ScanExpression':
+                const scanTemp = this.newTemp();
+                this.emit('SCAN', node.argument || null, null, scanTemp);
+                return scanTemp;
+            default:
+                return null;
+        }
+    }
+}
+
+// ============================================================
+// PHASE 5: CODE OPTIMIZER
+// ============================================================
+class CodeOptimizer {
+    optimize(intermediateCode) {
+        let optimized = [...intermediateCode];
+        optimized = this.deadCodeElimination(optimized);
+        optimized = this.constantFolding(optimized);
+        return optimized;
+    }
+
+    deadCodeElimination(code) {
+        const reachable = new Set();
+        let pc = 0;
+        while (pc < code.length) {
+            const instr = code[pc];
+            if (!instr.op) { pc++; continue; }
+            reachable.add(pc);
+            if (instr.op === 'JMP' || instr.op === 'RETURN') pc = code.length;
+            else pc++;
+        }
+        return code.filter((_, idx) => reachable.has(idx) || !code[idx].op);
+    }
+
+    constantFolding(code) {
+        const constants = new Map();
+        return code.map(instr => {
+            if (!instr.op) return instr;
+            if (instr.op === 'BINOP' && typeof instr.arg1 === 'number' && typeof instr.arg2 === 'number') {
+                let result;
+                switch (instr.result) {
+                    case '+': result = instr.arg1 + instr.arg2; break;
+                    case '-': result = instr.arg1 - instr.arg2; break;
+                    case '*': result = instr.arg1 * instr.arg2; break;
+                    case '/': result = instr.arg1 / instr.arg2; break;
+                    default: return instr;
+                }
+                constants.set(instr.result, result);
+                return { ...instr, result };
+            }
+            return instr;
+        });
+    }
+}
+
+// ============================================================
+// PHASE 6: BYTECODE GENERATOR & VIRTUAL MACHINE
+// ============================================================
+class BytecodeGenerator {
+    constructor() {
+        this.bytecode = [];
+        this.symbolTable = new Map();
+    }
+
+    generateBytecode(intermediateCode) {
+        this.bytecode = intermediateCode.map((instr, idx) => ({
+            addr: idx,
+            ...instr
+        }));
+        return this.bytecode;
+    }
+}
+
+class VirtualMachine {
+    constructor(bytecode, inputCallback) {
+        this.bytecode = bytecode;
+        this.pc = 0;
+        this.stack = [];
+        this.memory = new Map();
+        this.functions = new Map();
+        this.logs = [];
+        this.stepCount = 0;
+        this.maxSteps = 15000;
+        this.inputCallback = inputCallback;
+        this.isWaitingForInput = false;
+    }
+
+    async execute() {
+        while (this.pc < this.bytecode.length && this.stepCount < this.maxSteps) {
+            const instr = this.bytecode[this.pc];
+            if (!instr.op) { this.pc++; continue; }
+
+            this.stepCount++;
+
+            switch (instr.op) {
+                case 'PRINT':
+                    const valToPrint = this.resolveValue(instr.arg1);
+                    this.logs.push(String(valToPrint));
+                    break;
+                case 'ASSIGN':
+                    const val = this.resolveValue(instr.arg1);
+                    this.memory.set(instr.result, val);
+                    break;
+                case 'BINOP':
+                    const left = this.resolveValue(instr.arg1);
+                    const right = this.resolveValue(instr.arg2);
+                    let opResult;
+                    switch (instr.operator) {
+                        case '+': opResult = left + right; break;
+                        case '-': opResult = left - right; break;
+                        case '*': opResult = left * right; break;
+                        case '/': opResult = left / right; break;
+                        case '%': opResult = left % right; break;
+                        case '==': opResult = left == right; break;
+                        case '!=': opResult = left != right; break;
+                        case '<': opResult = left < right; break;
+                        case '>': opResult = left > right; break;
+                        case '<=': opResult = left <= right; break;
+                        case '>=': opResult = left >= right; break;
+                    }
+                    this.memory.set(instr.result, opResult);
+                    break;
+                case 'LOGOP':
+                    const leftL = this.resolveValue(instr.arg1);
+                    const rightL = this.resolveValue(instr.arg2);
+                    let logResult;
+                    if (instr.operator === 'OR') {
+                        logResult = leftL || rightL;
+                    } else if (instr.operator === 'AND') {
+                        logResult = leftL && rightL;
+                    }
+                    this.memory.set(instr.result, logResult);
+                    break;
+                case 'JF':
+                    if (!this.resolveValue(instr.arg1)) {
+                        this.pc = this.findLabel(instr.arg2);
+                        continue;
+                    }
+                    break;
+                case 'JMP':
+                    this.pc = this.findLabel(instr.arg1);
+                    continue;
+                case 'SCAN':
+                    const prompt_msg = instr.arg1 ? this.resolveValue(instr.arg1) : "Enter:";
+                    const input = await this.inputCallback(prompt_msg);
+                    this.memory.set(instr.result, isNaN(input) ? input : Number(input));
+                    break;
+            }
+            this.pc++;
+        }
+
+        if (this.stepCount >= this.maxSteps) {
+            throw new Error("🚨 Infinite Loop Protection Triggered! Execution cut-off (> 15,000 steps).");
+        }
+
+        return this.logs;
+    }
+
+    resolveValue(val) {
+        if (typeof val === 'number' || typeof val === 'string' || typeof val === 'boolean') return val;
+        if (this.memory.has(val)) return this.memory.get(val);
+        return val;
+    }
+
+    findLabel(labelName) {
+        for (let i = 0; i < this.bytecode.length; i++) {
+            if (this.bytecode[i].label === labelName) return i;
+        }
+        return this.pc + 1;
+    }
+}
+
+// ============================================================
+// COMPLETE COMPILER (6 PHASES)
+// ============================================================
+class CompleteCompiler {
+    constructor(inputCallback) {
+        this.phases = [];
+        this.inputCallback = inputCallback;
+    }
+
+    async compile(sourceCode) {
+        try {
+            // PHASE 1: Lexical Analysis
+            const lexer = new Lexer(sourceCode);
+            const tokens = lexer.tokenize();
+            this.phases.push({ phase: 1, name: 'Lexical Analysis', tokens: tokens.slice(0, 10) });
+
+            // PHASE 2: Syntax Analysis  
+            const parser = new Parser(tokens);
+            const ast = parser.parse();
+            this.phases.push({ phase: 2, name: 'Syntax Analysis (AST Generated)', success: true });
+
+            // PHASE 3: Semantic Analysis
+            const semanticAnalyzer = new SemanticAnalyzer();
+            const { symbolTable } = semanticAnalyzer.analyze(ast);
+            this.phases.push({ phase: 3, name: 'Semantic Analysis', symbols: symbolTable.symbols.size });
+
+            // PHASE 4: Intermediate Code Generation
+            const icGenerator = new IntermediateCodeGenerator();
+            const intermediateCode = icGenerator.generate(ast);
+            this.phases.push({ phase: 4, name: 'Intermediate Code Generation', instructions: intermediateCode.length });
+
+            // PHASE 5: Code Optimization
+            const optimizer = new CodeOptimizer();
+            const optimizedCode = optimizer.optimize(intermediateCode);
+            this.phases.push({ phase: 5, name: 'Code Optimization', optimized: true });
+
+            // PHASE 6: Bytecode Generation & Execution
+            const bcGenerator = new BytecodeGenerator();
+            const bytecode = bcGenerator.generateBytecode(optimizedCode);
+            this.phases.push({ phase: 6, name: 'Bytecode Generation', bytecodeSize: bytecode.length });
+
+            const vm = new VirtualMachine(bytecode, this.inputCallback);
+            const results = await vm.execute();
+
+            return { success: true, output: results, phases: this.phases };
+        } catch (err) {
+            return { success: false, error: err.message, phases: this.phases };
+        }
+    }
+}
+
+// Legacy Interpreter (kept for backward compatibility)
 class RuntimeInterpreter {
     constructor() {
         this.globalEnv = new Environment();
@@ -564,32 +1049,109 @@ require(['vs/editor/editor.main'], function () {
 
 window.clearConsole = function() { document.getElementById('terminal-screen').innerHTML = ''; }
 
-window.executeSourceCode = function() {
+let currentInputResolve = null;
+
+window.handleConsoleInput = function(event) {
+    if (event.key === 'Enter') {
+        const input = document.getElementById('console-input-field').value;
+        document.getElementById('console-input-field').value = '';
+        
+        // Display the input in the console
+        const inputRow = document.createElement('div');
+        inputRow.className = 'terminal-line';
+        inputRow.innerHTML = `<span class="terminal-output" style="color: #f59e0b;">${input}</span>`;
+        document.getElementById('terminal-screen').appendChild(inputRow);
+        
+        // Hide input area
+        document.getElementById('console-input-area').style.display = 'none';
+        
+        // Resolve the promise
+        if (currentInputResolve) {
+            currentInputResolve(input);
+            currentInputResolve = null;
+        }
+    }
+}
+
+window.requestConsoleInput = function(prompt) {
+    return new Promise((resolve) => {
+        currentInputResolve = resolve;
+        const inputArea = document.getElementById('console-input-area');
+        const inputField = document.getElementById('console-input-field');
+        const promptSpan = document.getElementById('input-prompt');
+        
+        promptSpan.textContent = prompt ? prompt : 'Input:';
+        inputArea.style.display = 'block';
+        inputField.focus();
+    });
+}
+
+window.executeSourceCode = async function() {
     const terminalScreen = document.getElementById('terminal-screen');
     const codeInputString = monacoEditorInstance.getValue();
     clearConsole();
 
     try {
-        const tokens = new Lexer(codeInputString).tokenize();
-        const ast = new Parser(tokens).parse();
-        const runtimeLogs = new RuntimeInterpreter().interpret(ast);
+        const compiler = new CompleteCompiler(window.requestConsoleInput);
+        const result = await compiler.compile(codeInputString);
 
-        if (runtimeLogs.length === 0) {
-            terminalScreen.innerHTML = `<div class="terminal-line"><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
+        // Display compilation phases
+        const phasesRow = document.createElement('div');
+        phasesRow.className = 'terminal-line';
+        phasesRow.innerHTML = `<span class="terminal-output" style="color: #8b5cf6; font-weight: bold;">╔════ 6-PHASE COMPILATION REPORT ════╗</span>`;
+        terminalScreen.appendChild(phasesRow);
+
+        result.phases.forEach(phase => {
+            const phaseRow = document.createElement('div');
+            phaseRow.className = 'terminal-line';
+            let info = `Phase ${phase.phase}: ${phase.name}`;
+            if (phase.tokens) info += ` - Tokens: ${phase.tokens.length}+`;
+            if (phase.symbols !== undefined) info += ` - Symbols: ${phase.symbols}`;
+            if (phase.instructions !== undefined) info += ` - Instructions: ${phase.instructions}`;
+            if (phase.bytecodeSize !== undefined) info += ` - Bytecode: ${phase.bytecodeSize}`;
+            
+            phaseRow.innerHTML = `<span class="terminal-output" style="color: #10b981;">${info}</span>`;
+            terminalScreen.appendChild(phaseRow);
+        });
+
+        const endRow = document.createElement('div');
+        endRow.className = 'terminal-line';
+        endRow.innerHTML = `<span class="terminal-output" style="color: #8b5cf6; font-weight: bold;">╚═════════════════════════════════╝</span>`;
+        terminalScreen.appendChild(endRow);
+
+        const outputRow = document.createElement('div');
+        outputRow.className = 'terminal-line';
+        outputRow.innerHTML = `<span class="terminal-output" style="color: #60a5fa; font-style: italic;">--- Program Output ---</span>`;
+        terminalScreen.appendChild(outputRow);
+
+        if (result.success) {
+            if (result.output.length === 0) {
+                terminalScreen.innerHTML += `<div class="terminal-line"><span class="terminal-output terminal-welcome">Program ran with no output.</span></div>`;
+            } else {
+                result.output.forEach(line => {
+                    const row = document.createElement('div');
+                    row.className = 'terminal-line';
+                    row.innerHTML = `<span class="terminal-output" style="white-space: pre-wrap;"></span>`;
+                    row.querySelector('.terminal-output').innerText = line;
+                    terminalScreen.appendChild(row);
+                });
+            }
         } else {
-            runtimeLogs.forEach(line => {
-                const row = document.createElement('div');
-                row.className = 'terminal-line';
-                row.innerHTML = `<span class="terminal-output" style="white-space: pre-wrap;"></span>`; // Added white-space to preserve tabs and newlines in HTML
-                row.querySelector('.terminal-output').innerText = line;
-                terminalScreen.appendChild(row);
-            });
+            const errRow = document.createElement('div');
+            errRow.className = 'terminal-line';
+            errRow.innerHTML = `<div class="terminal-error"></div>`;
+            errRow.querySelector('.terminal-error').innerText = result.error;
+            terminalScreen.appendChild(errRow);
         }
+        
+        // Hide input area after execution
+        document.getElementById('console-input-area').style.display = 'none';
     } catch (err) {
         const errRow = document.createElement('div');
         errRow.className = 'terminal-line';
         errRow.innerHTML = `<div class="terminal-error"></div>`;
         errRow.querySelector('.terminal-error').innerText = err.message;
         terminalScreen.appendChild(errRow);
+        document.getElementById('console-input-area').style.display = 'none';
     }
 }
